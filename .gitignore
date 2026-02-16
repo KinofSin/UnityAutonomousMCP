@@ -1,0 +1,25 @@
+# Node
+node_modules/
+server/node_modules/
+package-lock.json
+npm-debug.log*
+
+# Build output
+server/dist/
+*.tsbuildinfo
+
+# Unity generated
+[Ll]ibrary/
+[Tt]emp/
+[Oo]bj/
+[Bb]uild/
+[Bb]uilds/
+[Ll]ogs/
+UserSettings/
+MemoryCaptures/
+
+# IDE
+.vscode/
+.windsurf/
+.DS_Store
+Thumbs.db

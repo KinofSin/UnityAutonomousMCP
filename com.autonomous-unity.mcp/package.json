@@ -1,0 +1,21 @@
+{
+  "name": "com.autonomous.unity.mcp",
+  "displayName": "Autonomous Unity MCP",
+  "version": "0.1.0",
+  "unity": "2022.3",
+  "unityRelease": "22f1",
+  "description": "Autonomous-agent-ready MCP bridge for Unity Editor and Runtime.",
+  "author": {
+    "name": "Autonomous Unity Team"
+  },
+  "keywords": [
+    "mcp",
+    "ai",
+    "autonomous",
+    "unity"
+  ],
+  "dependencies": {
+    "com.unity.nuget.newtonsoft-json": "3.2.1",
+    "com.unity.test-framework": "1.1.33"
+  }
+}

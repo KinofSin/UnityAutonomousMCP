@@ -1,0 +1,16 @@
+{
+  "name": "unity-autonomous-mcp-workspace",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Workspace for Unity Autonomous Agent MCP (Unity 2022.3.22f1)",
+  "workspaces": [
+    "server"
+  ],
+  "scripts": {
+    "build": "npm --workspace server run build",
+    "dev": "npm --workspace server run dev",
+    "lint": "npm --workspace server run lint",
+    "test": "npm --workspace server run test",
+    "smoke": "npm --workspace server run smoke"
+  }
+}
