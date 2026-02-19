@@ -215,9 +215,9 @@ namespace AutonomousMcp.Editor
                 action,
                 name = created.name,
                 instanceId = created.GetInstanceID(),
-                position = created.transform.position,
-                rotation = created.transform.eulerAngles,
-                scale = created.transform.localScale
+                position = ToVectorPayload(created.transform.position),
+                rotation = ToVectorPayload(created.transform.eulerAngles),
+                scale = ToVectorPayload(created.transform.localScale)
             }));
         }
 
@@ -247,9 +247,9 @@ namespace AutonomousMcp.Editor
                 name = target.name,
                 instanceId = target.GetInstanceID(),
                 activeSelf = target.activeSelf,
-                position = target.transform.position,
-                rotation = target.transform.eulerAngles,
-                scale = target.transform.localScale
+                position = ToVectorPayload(target.transform.position),
+                rotation = ToVectorPayload(target.transform.eulerAngles),
+                scale = ToVectorPayload(target.transform.localScale)
             }));
         }
 
@@ -292,9 +292,9 @@ namespace AutonomousMcp.Editor
                 action,
                 name = target.name,
                 instanceId = target.GetInstanceID(),
-                position = target.transform.position,
-                rotation = target.transform.eulerAngles,
-                scale = target.transform.localScale
+                position = ToVectorPayload(target.transform.position),
+                rotation = ToVectorPayload(target.transform.eulerAngles),
+                scale = ToVectorPayload(target.transform.localScale)
             }));
         }
 
@@ -343,6 +343,16 @@ namespace AutonomousMcp.Editor
             }
 
             return fallback;
+        }
+
+        private static object ToVectorPayload(Vector3 vector)
+        {
+            return new
+            {
+                x = vector.x,
+                y = vector.y,
+                z = vector.z
+            };
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)
