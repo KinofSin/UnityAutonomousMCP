@@ -8,6 +8,13 @@ export interface ToolCapability {
 
 export const TOOL_CAPABILITIES: ToolCapability[] = [
   {
+    tool: "health_check",
+    category: "editor",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Returns package/runtime status and currently supported Unity tool actions."
+  },
+  {
     tool: "batch_execute",
     category: "agent",
     destructive: false,

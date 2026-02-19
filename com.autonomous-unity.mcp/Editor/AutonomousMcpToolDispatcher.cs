@@ -31,6 +31,8 @@ namespace AutonomousMcp.Editor
             {
                 switch (envelope.tool)
                 {
+                    case "health_check":
+                        return HandleHealthCheck(args);
                     case "read_console":
                         return HandleReadConsole(args);
                     case "manage_scene":
@@ -69,6 +71,49 @@ namespace AutonomousMcp.Editor
                 limit,
                 count = logs.Count,
                 entries = logs
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleHealthCheck(JObject args)
+        {
+            var scene = SceneManager.GetActiveScene();
+
+            return Success(JToken.FromObject(new
+            {
+                ok = true,
+                package = "com.autonomous.unity.mcp",
+                unityVersion = Application.unityVersion,
+                projectPath = Application.dataPath,
+                activeScene = new
+                {
+                    name = scene.name,
+                    path = scene.path,
+                    isDirty = scene.isDirty
+                },
+                editor = new
+                {
+                    isPlaying = EditorApplication.isPlaying,
+                    isCompiling = EditorApplication.isCompiling,
+                    isUpdating = EditorApplication.isUpdating
+                },
+                supportedTools = new[]
+                {
+                    "health_check",
+                    "read_console",
+                    "manage_scene",
+                    "manage_gameobject",
+                    "manage_script",
+                    "validate_script",
+                    "run_tests",
+                    "get_test_job",
+                    "batch_execute"
+                },
+                supportedActions = new
+                {
+                    manage_scene = new[] { "inspect_active_scene", "save_active_scene" },
+                    manage_gameobject = new[] { "create", "create_primitive", "find", "find_by_name", "set_transform", "destroy" },
+                    manage_script = new[] { "create_or_update" }
+                }
             }));
         }
 
