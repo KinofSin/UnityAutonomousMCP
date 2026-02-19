@@ -111,7 +111,7 @@ namespace AutonomousMcp.Editor
                 supportedActions = new
                 {
                     manage_scene = new[] { "inspect_active_scene", "save_active_scene" },
-                    manage_gameobject = new[] { "create", "create_primitive", "find", "find_by_name", "set_transform", "destroy" },
+                    manage_gameobject = new[] { "create", "create_empty", "create_primitive", "find", "find_by_name", "find_contains", "set_transform", "get_world_transform", "reparent", "get_children", "get_parent", "get_full_hierarchy", "set_active", "rename", "destroy" },
                     manage_script = new[] { "create_or_update" }
                 }
             }));
@@ -145,7 +145,12 @@ namespace AutonomousMcp.Editor
                 }
                 case "save_active_scene":
                 {
-                    var saved = EditorSceneManager.SaveScene(scene);
+                    if (string.IsNullOrWhiteSpace(scene.path))
+                    {
+                        return Error("Active scene has no path yet. Save it once in Unity before calling save_active_scene.");
+                    }
+
+                    var saved = EditorSceneManager.SaveScene(scene, scene.path, false);
                     return Success(JToken.FromObject(new
                     {
                         action,
@@ -206,15 +211,32 @@ namespace AutonomousMcp.Editor
             switch (action)
             {
                 case "create":
+                case "create_empty":
                 case "create_primitive":
                     return HandleCreateGameObject(args, action);
                 case "find":
                 case "find_by_name":
                     return HandleFindGameObject(args, action);
+                case "find_contains":
+                    return HandleFindContainsGameObject(args, action);
+                case "reparent":
+                    return HandleReparentGameObject(args, action);
+                case "get_children":
+                    return HandleGetChildren(args, action);
+                case "get_parent":
+                    return HandleGetParent(args, action);
+                case "get_full_hierarchy":
+                    return HandleGetFullHierarchy(action);
+                case "set_active":
+                    return HandleSetActive(args, action);
+                case "rename":
+                    return HandleRename(args, action);
                 case "destroy":
                     return HandleDestroyGameObject(args, action);
                 case "set_transform":
                     return HandleSetGameObjectTransform(args, action);
+                case "get_world_transform":
+                    return HandleGetWorldTransform(args, action);
                 default:
                     return Error($"Unsupported manage_gameobject action '{action}'.");
             }
@@ -226,7 +248,11 @@ namespace AutonomousMcp.Editor
             var primitiveTypeRaw = args.Value<string>("primitiveType") ?? args.Value<string>("primitive_type");
 
             GameObject created;
-            if (!string.IsNullOrWhiteSpace(primitiveTypeRaw) && Enum.TryParse(primitiveTypeRaw, true, out PrimitiveType primitiveType))
+            if (action == "create_empty")
+            {
+                created = new GameObject(name);
+            }
+            else if (!string.IsNullOrWhiteSpace(primitiveTypeRaw) && Enum.TryParse(primitiveTypeRaw, true, out PrimitiveType primitiveType))
             {
                 created = GameObject.CreatePrimitive(primitiveType);
                 created.name = name;
@@ -241,12 +267,13 @@ namespace AutonomousMcp.Editor
             }
 
             var parentName = args.Value<string>("parent");
+            var worldPositionStays = args.Value<bool?>("worldPositionStays") ?? false;
             if (!string.IsNullOrWhiteSpace(parentName))
             {
                 var parent = GameObject.Find(parentName);
                 if (parent != null)
                 {
-                    created.transform.SetParent(parent.transform, false);
+                    created.transform.SetParent(parent.transform, worldPositionStays);
                 }
             }
 
@@ -290,11 +317,219 @@ namespace AutonomousMcp.Editor
                 action,
                 found = true,
                 name = target.name,
+                fullPath = GetFullPath(target.transform),
                 instanceId = target.GetInstanceID(),
                 activeSelf = target.activeSelf,
                 position = ToVectorPayload(target.transform.position),
                 rotation = ToVectorPayload(target.transform.eulerAngles),
                 scale = ToVectorPayload(target.transform.localScale)
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleFindContainsGameObject(JObject args, string action)
+        {
+            var query = args.Value<string>("query") ?? args.Value<string>("name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(query))
+            {
+                return Error("find_contains requires a non-empty query.");
+            }
+
+            var matches = new JArray();
+            foreach (var gameObject in EnumerateSceneGameObjects())
+            {
+                if (gameObject.name.IndexOf(query, StringComparison.OrdinalIgnoreCase) < 0)
+                {
+                    continue;
+                }
+
+                matches.Add(JToken.FromObject(new
+                {
+                    name = gameObject.name,
+                    fullPath = GetFullPath(gameObject.transform),
+                    instanceId = gameObject.GetInstanceID(),
+                    activeSelf = gameObject.activeSelf
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                query,
+                count = matches.Count,
+                matches
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleReparentGameObject(JObject args, string action)
+        {
+            var child = ResolveGameObject(args);
+            if (child == null)
+            {
+                return Error("reparent requires a valid child target by instanceId or name.");
+            }
+
+            var parentName = args.Value<string>("parent_name") ?? args.Value<string>("parent") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(parentName))
+            {
+                return Error("reparent requires parent_name (or parent).");
+            }
+
+            var parent = GameObject.Find(parentName);
+            if (parent == null)
+            {
+                return Error($"Parent GameObject '{parentName}' not found.");
+            }
+
+            var worldPositionStays = args.Value<bool?>("worldPositionStays") ?? true;
+            Undo.SetTransformParent(child.transform, parent.transform, "MCP: Reparent GameObject");
+            child.transform.SetParent(parent.transform, worldPositionStays);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                child = child.name,
+                parent = parent.name,
+                worldPositionStays,
+                fullPath = GetFullPath(child.transform)
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetChildren(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("get_children requires a valid target by instanceId or name.");
+            }
+
+            var recursive = args.Value<bool?>("recursive") ?? false;
+            var children = new JArray();
+
+            if (recursive)
+            {
+                AddChildEntriesRecursive(target.transform, children);
+            }
+            else
+            {
+                foreach (Transform child in target.transform)
+                {
+                    children.Add(JToken.FromObject(new
+                    {
+                        name = child.name,
+                        instanceId = child.gameObject.GetInstanceID(),
+                        fullPath = GetFullPath(child),
+                        localPosition = ToVectorPayload(child.localPosition),
+                        localRotation = ToVectorPayload(child.localEulerAngles),
+                        localScale = ToVectorPayload(child.localScale)
+                    }));
+                }
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                name = target.name,
+                recursive,
+                count = children.Count,
+                children
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetParent(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("get_parent requires a valid target by instanceId or name.");
+            }
+
+            var parent = target.transform.parent;
+            return Success(JToken.FromObject(new
+            {
+                action,
+                name = target.name,
+                hasParent = parent != null,
+                parent = parent == null
+                    ? null
+                    : new
+                    {
+                        name = parent.name,
+                        instanceId = parent.gameObject.GetInstanceID(),
+                        fullPath = GetFullPath(parent)
+                    }
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetFullHierarchy(string action)
+        {
+            var scene = SceneManager.GetActiveScene();
+            var roots = scene.GetRootGameObjects();
+            var hierarchy = new JArray();
+            foreach (var root in roots)
+            {
+                hierarchy.Add(BuildHierarchyNode(root.transform));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                scene = scene.name,
+                rootCount = roots.Length,
+                hierarchy
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetActive(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("set_active requires a valid target by instanceId or name.");
+            }
+
+            var active = args.Value<bool?>("active");
+            if (!active.HasValue)
+            {
+                return Error("set_active requires an 'active' boolean parameter.");
+            }
+
+            Undo.RecordObject(target, "MCP: Set GameObject Active");
+            target.SetActive(active.Value);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                name = target.name,
+                instanceId = target.GetInstanceID(),
+                activeSelf = target.activeSelf
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleRename(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("rename requires a valid target by instanceId or name.");
+            }
+
+            var newName = args.Value<string>("new_name") ?? args.Value<string>("newName") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(newName))
+            {
+                return Error("rename requires new_name (or newName).");
+            }
+
+            var oldName = target.name;
+            Undo.RecordObject(target, "MCP: Rename GameObject");
+            target.name = newName;
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                oldName,
+                newName,
+                instanceId = target.GetInstanceID(),
+                fullPath = GetFullPath(target.transform)
             }));
         }
 
@@ -308,7 +543,7 @@ namespace AutonomousMcp.Editor
 
             var targetName = target.name;
             var instanceId = target.GetInstanceID();
-            UnityEngine.Object.DestroyImmediate(target);
+            Undo.DestroyObjectImmediate(target);
 
             return Success(JToken.FromObject(new
             {
@@ -327,10 +562,43 @@ namespace AutonomousMcp.Editor
                 return Error("set_transform requires a valid target by instanceId or name.");
             }
 
-            target.transform.position = ReadVector3(args["position"], target.transform.position);
-            var euler = ReadVector3(args["rotation"], target.transform.eulerAngles);
-            target.transform.rotation = Quaternion.Euler(euler);
+            var space = (args.Value<string>("space") ?? "world").Trim().ToLowerInvariant();
+            Undo.RecordObject(target.transform, "MCP: Set Transform");
+
+            if (space == "local")
+            {
+                target.transform.localPosition = ReadVector3(args["position"], target.transform.localPosition);
+                var localEuler = ReadVector3(args["rotation"], target.transform.localEulerAngles);
+                target.transform.localRotation = Quaternion.Euler(localEuler);
+            }
+            else
+            {
+                target.transform.position = ReadVector3(args["position"], target.transform.position);
+                var worldEuler = ReadVector3(args["rotation"], target.transform.eulerAngles);
+                target.transform.rotation = Quaternion.Euler(worldEuler);
+            }
+
             target.transform.localScale = ReadVector3(args["scale"], target.transform.localScale);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                space,
+                name = target.name,
+                instanceId = target.GetInstanceID(),
+                position = ToVectorPayload(target.transform.position),
+                rotation = ToVectorPayload(target.transform.eulerAngles),
+                scale = ToVectorPayload(target.transform.localScale)
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetWorldTransform(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("get_world_transform requires a valid target by instanceId or name.");
+            }
 
             return Success(JToken.FromObject(new
             {
@@ -339,7 +607,8 @@ namespace AutonomousMcp.Editor
                 instanceId = target.GetInstanceID(),
                 position = ToVectorPayload(target.transform.position),
                 rotation = ToVectorPayload(target.transform.eulerAngles),
-                scale = ToVectorPayload(target.transform.localScale)
+                lossyScale = ToVectorPayload(target.transform.lossyScale),
+                fullPath = GetFullPath(target.transform)
             }));
         }
 
@@ -398,6 +667,87 @@ namespace AutonomousMcp.Editor
                 y = vector.y,
                 z = vector.z
             };
+        }
+
+        private static IEnumerable<GameObject> EnumerateSceneGameObjects()
+        {
+            var scene = SceneManager.GetActiveScene();
+            if (!scene.IsValid())
+            {
+                yield break;
+            }
+
+            var roots = scene.GetRootGameObjects();
+            foreach (var root in roots)
+            {
+                yield return root;
+
+                foreach (Transform descendant in root.transform.GetComponentsInChildren<Transform>(true))
+                {
+                    if (descendant == root.transform)
+                    {
+                        continue;
+                    }
+
+                    yield return descendant.gameObject;
+                }
+            }
+        }
+
+        private static string GetFullPath(Transform transform)
+        {
+            if (transform == null)
+            {
+                return string.Empty;
+            }
+
+            var segments = new List<string>();
+            var current = transform;
+            while (current != null)
+            {
+                segments.Add(current.name);
+                current = current.parent;
+            }
+
+            segments.Reverse();
+            return string.Join("/", segments);
+        }
+
+        private static JToken BuildHierarchyNode(Transform transform)
+        {
+            var children = new JArray();
+            foreach (Transform child in transform)
+            {
+                children.Add(BuildHierarchyNode(child));
+            }
+
+            return JToken.FromObject(new
+            {
+                name = transform.name,
+                instanceId = transform.gameObject.GetInstanceID(),
+                fullPath = GetFullPath(transform),
+                activeSelf = transform.gameObject.activeSelf,
+                activeInHierarchy = transform.gameObject.activeInHierarchy,
+                children
+            });
+        }
+
+        private static void AddChildEntriesRecursive(Transform parent, JArray children)
+        {
+            foreach (Transform child in parent)
+            {
+                children.Add(JToken.FromObject(new
+                {
+                    name = child.name,
+                    instanceId = child.gameObject.GetInstanceID(),
+                    fullPath = GetFullPath(child),
+                    localPosition = ToVectorPayload(child.localPosition),
+                    localRotation = ToVectorPayload(child.localEulerAngles),
+                    localScale = ToVectorPayload(child.localScale)
+                }));
+
+                AddChildEntriesRecursive(child, children);
+            }
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)

@@ -26,14 +26,14 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     category: "scene",
     destructive: false,
     supportsBatch: true,
-    notes: "Scene inspection, load, save, and active-scene operations."
+    notes: "Scene inspection and safe active-scene save (returns explicit error if scene has no saved path)."
   },
   {
     tool: "manage_gameobject",
     category: "editor",
     destructive: false,
     supportsBatch: true,
-    notes: "Create/create_primitive, find/find_by_name, set_transform, and destroy lifecycle actions."
+    notes: "Expanded lifecycle and hierarchy actions: create/create_empty/create_primitive, find/find_by_name/find_contains, set_transform(local|world), get_world_transform, reparent, get_children/get_parent/get_full_hierarchy, set_active, rename, destroy."
   },
   {
     tool: "manage_script",
