@@ -35,6 +35,8 @@ namespace AutonomousMcp.Editor
                         return HandleReadConsole(args);
                     case "manage_scene":
                         return HandleManageScene(args);
+                    case "manage_gameobject":
+                        return HandleManageGameObject(args);
                     case "manage_script":
                         return HandleManageScript(args);
                     case "validate_script":
@@ -150,6 +152,197 @@ namespace AutonomousMcp.Editor
                 scriptPath,
                 bytes = contents.Length
             }));
+        }
+
+        private static AutonomousMcpToolResponse HandleManageGameObject(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "create":
+                case "create_primitive":
+                    return HandleCreateGameObject(args, action);
+                case "find":
+                case "find_by_name":
+                    return HandleFindGameObject(args, action);
+                case "destroy":
+                    return HandleDestroyGameObject(args, action);
+                case "set_transform":
+                    return HandleSetGameObjectTransform(args, action);
+                default:
+                    return Error($"Unsupported manage_gameobject action '{action}'.");
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleCreateGameObject(JObject args, string action)
+        {
+            var name = args.Value<string>("name") ?? "AgentGameObject";
+            var primitiveTypeRaw = args.Value<string>("primitiveType") ?? args.Value<string>("primitive_type");
+
+            GameObject created;
+            if (!string.IsNullOrWhiteSpace(primitiveTypeRaw) && Enum.TryParse(primitiveTypeRaw, true, out PrimitiveType primitiveType))
+            {
+                created = GameObject.CreatePrimitive(primitiveType);
+                created.name = name;
+            }
+            else if (action == "create_primitive")
+            {
+                return Error("create_primitive requires a valid primitiveType (Cube, Sphere, Capsule, Cylinder, Plane, Quad).");
+            }
+            else
+            {
+                created = new GameObject(name);
+            }
+
+            var parentName = args.Value<string>("parent");
+            if (!string.IsNullOrWhiteSpace(parentName))
+            {
+                var parent = GameObject.Find(parentName);
+                if (parent != null)
+                {
+                    created.transform.SetParent(parent.transform, false);
+                }
+            }
+
+            created.transform.position = ReadVector3(args["position"], created.transform.position);
+            var euler = ReadVector3(args["rotation"], created.transform.eulerAngles);
+            created.transform.rotation = Quaternion.Euler(euler);
+            created.transform.localScale = ReadVector3(args["scale"], created.transform.localScale);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                name = created.name,
+                instanceId = created.GetInstanceID(),
+                position = created.transform.position,
+                rotation = created.transform.eulerAngles,
+                scale = created.transform.localScale
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleFindGameObject(JObject args, string action)
+        {
+            var name = args.Value<string>("name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(name))
+            {
+                return Error("find/find_by_name requires a non-empty name.");
+            }
+
+            var target = GameObject.Find(name);
+            if (target == null)
+            {
+                return Success(JToken.FromObject(new
+                {
+                    action,
+                    found = false,
+                    name
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                found = true,
+                name = target.name,
+                instanceId = target.GetInstanceID(),
+                activeSelf = target.activeSelf,
+                position = target.transform.position,
+                rotation = target.transform.eulerAngles,
+                scale = target.transform.localScale
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleDestroyGameObject(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("destroy requires a valid target by instanceId or name.");
+            }
+
+            var targetName = target.name;
+            var instanceId = target.GetInstanceID();
+            UnityEngine.Object.DestroyImmediate(target);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                destroyed = true,
+                name = targetName,
+                instanceId
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetGameObjectTransform(JObject args, string action)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+            {
+                return Error("set_transform requires a valid target by instanceId or name.");
+            }
+
+            target.transform.position = ReadVector3(args["position"], target.transform.position);
+            var euler = ReadVector3(args["rotation"], target.transform.eulerAngles);
+            target.transform.rotation = Quaternion.Euler(euler);
+            target.transform.localScale = ReadVector3(args["scale"], target.transform.localScale);
+
+            return Success(JToken.FromObject(new
+            {
+                action,
+                name = target.name,
+                instanceId = target.GetInstanceID(),
+                position = target.transform.position,
+                rotation = target.transform.eulerAngles,
+                scale = target.transform.localScale
+            }));
+        }
+
+        private static GameObject ResolveGameObject(JObject args)
+        {
+            var instanceId = args.Value<int?>("instanceId");
+            if (instanceId.HasValue)
+            {
+                var byId = EditorUtility.InstanceIDToObject(instanceId.Value) as GameObject;
+                if (byId != null)
+                {
+                    return byId;
+                }
+            }
+
+            var name = args.Value<string>("name") ?? args.Value<string>("target") ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(name))
+            {
+                return GameObject.Find(name);
+            }
+
+            return null;
+        }
+
+        private static Vector3 ReadVector3(JToken token, Vector3 fallback)
+        {
+            if (token == null)
+            {
+                return fallback;
+            }
+
+            if (token is JObject obj)
+            {
+                var x = obj.Value<float?>("x") ?? fallback.x;
+                var y = obj.Value<float?>("y") ?? fallback.y;
+                var z = obj.Value<float?>("z") ?? fallback.z;
+                return new Vector3(x, y, z);
+            }
+
+            if (token is JArray arr && arr.Count >= 3)
+            {
+                var x = arr[0]?.Value<float?>() ?? fallback.x;
+                var y = arr[1]?.Value<float?>() ?? fallback.y;
+                var z = arr[2]?.Value<float?>() ?? fallback.z;
+                return new Vector3(x, y, z);
+            }
+
+            return fallback;
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)

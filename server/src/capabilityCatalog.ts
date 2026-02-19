@@ -26,7 +26,7 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     category: "editor",
     destructive: false,
     supportsBatch: true,
-    notes: "Transform, hierarchy, and object lifecycle management."
+    notes: "Create/create_primitive, find/find_by_name, set_transform, and destroy lifecycle actions."
   },
   {
     tool: "manage_script",
