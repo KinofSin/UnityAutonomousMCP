@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IO;
 using System.Linq;
 using System.Reflection;
+using System.Text.RegularExpressions;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -65,6 +66,22 @@ namespace AutonomousMcp.Editor
                         return HandleManageAnimator(args);
                     case "manage_material":
                         return HandleManageMaterial(args);
+                    case "execute_csharp":
+                        return HandleExecuteCSharp(args);
+                    case "search_hierarchy":
+                        return HandleSearchHierarchy(args);
+                    case "get_project_structure":
+                        return HandleGetProjectStructure(args);
+                    case "manage_prefab":
+                        return HandleManagePrefab(args);
+                    case "manage_selection":
+                        return HandleManageSelection(args);
+                    case "manage_layer_tag":
+                        return HandleManageLayerTag(args);
+                    case "get_compilation_errors":
+                        return HandleGetCompilationErrors(args);
+                    case "manage_project_settings":
+                        return HandleManageProjectSettings(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -129,6 +146,14 @@ namespace AutonomousMcp.Editor
                     "read_script",
                     "execute_menu_item",
                     "capture_screenshot",
+                    "execute_csharp",
+                    "search_hierarchy",
+                    "get_project_structure",
+                    "manage_prefab",
+                    "manage_selection",
+                    "manage_layer_tag",
+                    "get_compilation_errors",
+                    "manage_project_settings",
                     "validate_script",
                     "run_tests",
                     "get_test_job",
@@ -144,7 +169,11 @@ namespace AutonomousMcp.Editor
                     manage_editor = new[] { "enter_play_mode", "exit_play_mode", "pause", "step", "undo", "redo" },
                     manage_animator = new[] { "get_parameters", "set_parameter", "get_layers", "get_states", "get_current_state" },
                     manage_material = new[] { "get", "get_properties", "set_property", "list_materials" },
-                    capture_screenshot = new[] { "scene", "game" }
+                    capture_screenshot = new[] { "scene", "game" },
+                    manage_prefab = new[] { "get_status", "open", "apply_overrides", "revert_overrides", "unpack" },
+                    manage_selection = new[] { "get", "set", "clear", "focus" },
+                    manage_layer_tag = new[] { "get", "set_layer", "set_tag", "list_layers", "list_tags", "list_sorting_layers" },
+                    manage_project_settings = new[] { "get_player_settings", "set_player_setting", "get_quality_settings", "get_physics_settings", "get_time_settings" }
                 }
             }));
         }
@@ -245,9 +274,11 @@ namespace AutonomousMcp.Editor
             var scriptPath = args.Value<string>("scriptPath") ?? string.Empty;
             var contents = args.Value<string>("contents") ?? string.Empty;
 
-            if (string.IsNullOrWhiteSpace(scriptPath) || !scriptPath.StartsWith("Assets/", StringComparison.Ordinal))
+            if (string.IsNullOrWhiteSpace(scriptPath) ||
+                !(scriptPath.StartsWith("Assets/", StringComparison.Ordinal) ||
+                  scriptPath.StartsWith("Packages/", StringComparison.Ordinal)))
             {
-                return Error("scriptPath must start with 'Assets/'.");
+                return Error("scriptPath must start with 'Assets/' or 'Packages/'.");
             }
 
             var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
@@ -1340,8 +1371,10 @@ namespace AutonomousMcp.Editor
         private static AutonomousMcpToolResponse HandleReadScript(JObject args)
         {
             var scriptPath = args.Value<string>("scriptPath") ?? args.Value<string>("script_path") ?? string.Empty;
-            if (string.IsNullOrWhiteSpace(scriptPath) || !scriptPath.StartsWith("Assets/", StringComparison.Ordinal))
-                return Error("read_script requires scriptPath starting with 'Assets/'.");
+            if (string.IsNullOrWhiteSpace(scriptPath) ||
+                !(scriptPath.StartsWith("Assets/", StringComparison.Ordinal) ||
+                  scriptPath.StartsWith("Packages/", StringComparison.Ordinal)))
+                return Error("read_script requires scriptPath starting with 'Assets/' or 'Packages/'.");
 
             var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
             if (string.IsNullOrEmpty(projectRoot))
@@ -1998,6 +2031,880 @@ namespace AutonomousMcp.Editor
                 count = matList.Count,
                 materials = matList
             }));
+        }
+
+        // ───────── execute_csharp ─────────
+
+        private static AutonomousMcpToolResponse HandleExecuteCSharp(JObject args)
+        {
+            var code = args.Value<string>("code") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(code))
+                return Error("execute_csharp requires non-empty 'code'.");
+
+            var returnResult = args.Value<bool?>("return_result") ?? true;
+
+            try
+            {
+                var fullCode = @"
+using System;
+using System.Collections.Generic;
+using System.Linq;
+using System.IO;
+using UnityEngine;
+using UnityEditor;
+using UnityEngine.SceneManagement;
+using UnityEditor.SceneManagement;
+
+public static class __McpEval
+{
+    public static object Run()
+    {
+        " + code + @"
+    }
+}";
+                var provider = new Microsoft.CSharp.CSharpCodeProvider();
+                var parameters = new System.CodeDom.Compiler.CompilerParameters
+                {
+                    GenerateInMemory = true,
+                    GenerateExecutable = false,
+                    TreatWarningsAsErrors = false
+                };
+
+                // Add references to all loaded assemblies
+                foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+                {
+                    try
+                    {
+                        if (!asm.IsDynamic && !string.IsNullOrEmpty(asm.Location))
+                            parameters.ReferencedAssemblies.Add(asm.Location);
+                    }
+                    catch { /* skip problematic assemblies */ }
+                }
+
+                var results = provider.CompileAssemblyFromSource(parameters, fullCode);
+                if (results.Errors.HasErrors)
+                {
+                    var errors = new List<string>();
+                    foreach (System.CodeDom.Compiler.CompilerError error in results.Errors)
+                    {
+                        if (!error.IsWarning)
+                            errors.Add($"Line {error.Line}: {error.ErrorText}");
+                    }
+                    return Error($"Compilation failed:\n{string.Join("\n", errors)}");
+                }
+
+                var type = results.CompiledAssembly.GetType("__McpEval");
+                var method = type.GetMethod("Run", BindingFlags.Public | BindingFlags.Static);
+                var result = method.Invoke(null, null);
+
+                if (returnResult && result != null)
+                {
+                    // Try to serialize complex objects
+                    string resultStr;
+                    try
+                    {
+                        resultStr = JToken.FromObject(result).ToString();
+                    }
+                    catch
+                    {
+                        resultStr = result.ToString();
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        executed = true,
+                        resultType = result.GetType().FullName,
+                        result = resultStr
+                    }));
+                }
+
+                return Success(JToken.FromObject(new
+                {
+                    executed = true,
+                    resultType = "void",
+                    result = (string)null
+                }));
+            }
+            catch (TargetInvocationException tie)
+            {
+                var inner = tie.InnerException ?? tie;
+                return Error($"Runtime error: {inner.GetType().Name}: {inner.Message}\n{inner.StackTrace}");
+            }
+            catch (Exception ex)
+            {
+                return Error($"execute_csharp failed: {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+
+        // ───────── search_hierarchy ─────────
+
+        private static AutonomousMcpToolResponse HandleSearchHierarchy(JObject args)
+        {
+            var namePattern = args.Value<string>("name_pattern") ?? args.Value<string>("namePattern");
+            var componentType = args.Value<string>("component_type") ?? args.Value<string>("componentType");
+            var tag = args.Value<string>("tag");
+            var layer = args.Value<string>("layer");
+            var activeOnly = args.Value<bool?>("active_only") ?? false;
+            var includeComponents = args.Value<bool?>("include_components") ?? false;
+            var includeInactive = args.Value<bool?>("include_inactive") ?? true;
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 100, 500));
+
+            Regex nameRegex = null;
+            if (!string.IsNullOrWhiteSpace(namePattern))
+            {
+                try { nameRegex = new Regex(namePattern, RegexOptions.IgnoreCase); }
+                catch { return Error($"Invalid regex pattern: '{namePattern}'."); }
+            }
+
+            Type filterType = null;
+            if (!string.IsNullOrWhiteSpace(componentType))
+            {
+                filterType = ResolveType(componentType);
+                if (filterType == null)
+                    return Error($"Component type '{componentType}' not found.");
+            }
+
+            int? layerMask = null;
+            if (!string.IsNullOrWhiteSpace(layer))
+            {
+                int layerIndex = LayerMask.NameToLayer(layer);
+                if (layerIndex >= 0) layerMask = layerIndex;
+                else if (int.TryParse(layer, out int parsed)) layerMask = parsed;
+                else return Error($"Layer '{layer}' not found.");
+            }
+
+            var matches = new JArray();
+            int count = 0;
+
+            foreach (var go in EnumerateSceneGameObjects())
+            {
+                if (count >= limit) break;
+
+                if (activeOnly && !go.activeInHierarchy) continue;
+                if (!includeInactive && !go.activeSelf) continue;
+
+                if (nameRegex != null && !nameRegex.IsMatch(go.name)) continue;
+
+                if (filterType != null && go.GetComponent(filterType) == null) continue;
+
+                if (!string.IsNullOrWhiteSpace(tag) && !go.CompareTag(tag)) continue;
+
+                if (layerMask.HasValue && go.layer != layerMask.Value) continue;
+
+                var entry = new JObject
+                {
+                    ["name"] = go.name,
+                    ["fullPath"] = GetFullPath(go.transform),
+                    ["instanceId"] = go.GetInstanceID(),
+                    ["activeSelf"] = go.activeSelf,
+                    ["activeInHierarchy"] = go.activeInHierarchy,
+                    ["layer"] = LayerMask.LayerToName(go.layer),
+                    ["tag"] = go.tag
+                };
+
+                if (includeComponents)
+                {
+                    var comps = new JArray();
+                    foreach (var c in go.GetComponents<Component>())
+                    {
+                        if (c == null) { comps.Add("(missing script)"); continue; }
+                        comps.Add(c.GetType().Name);
+                    }
+                    entry["components"] = comps;
+                }
+
+                matches.Add(entry);
+                count++;
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                filters = new
+                {
+                    namePattern,
+                    componentType,
+                    tag,
+                    layer,
+                    activeOnly,
+                    includeComponents
+                },
+                count = matches.Count,
+                matches
+            }));
+        }
+
+        // ───────── get_project_structure ─────────
+
+        private static AutonomousMcpToolResponse HandleGetProjectStructure(JObject args)
+        {
+            var rootPath = args.Value<string>("path") ?? "Assets";
+            var maxDepth = Math.Max(1, Math.Min(args.Value<int?>("depth") ?? 3, 10));
+            var extensions = args.Value<string>("extensions"); // comma-separated, e.g. ".cs,.shader"
+            var includeMeta = args.Value<bool?>("include_meta") ?? false;
+
+            var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+            if (string.IsNullOrEmpty(projectRoot))
+                return Error("Failed to resolve project root.");
+
+            var fullRootPath = Path.Combine(projectRoot, rootPath.Replace('/', Path.DirectorySeparatorChar));
+            if (!Directory.Exists(fullRootPath))
+                return Error($"Directory not found: '{rootPath}'.");
+
+            HashSet<string> extFilter = null;
+            if (!string.IsNullOrWhiteSpace(extensions))
+            {
+                extFilter = new HashSet<string>(
+                    extensions.Split(',').Select(e => e.Trim().ToLowerInvariant()),
+                    StringComparer.OrdinalIgnoreCase);
+            }
+
+            var tree = BuildDirectoryTree(fullRootPath, projectRoot, maxDepth, 0, extFilter, includeMeta);
+
+            return Success(JToken.FromObject(new
+            {
+                rootPath,
+                maxDepth,
+                extensions,
+                tree
+            }));
+        }
+
+        private static JToken BuildDirectoryTree(string dirPath, string projectRoot, int maxDepth, int currentDepth,
+            HashSet<string> extFilter, bool includeMeta)
+        {
+            var dirName = Path.GetFileName(dirPath);
+            var relativePath = dirPath.Substring(projectRoot.Length + 1).Replace('\\', '/');
+            var node = new JObject
+            {
+                ["name"] = dirName,
+                ["path"] = relativePath,
+                ["type"] = "directory"
+            };
+
+            try
+            {
+                var files = Directory.GetFiles(dirPath);
+                var filteredFiles = new JArray();
+                int fileCount = 0;
+
+                foreach (var file in files)
+                {
+                    var fileName = Path.GetFileName(file);
+                    if (!includeMeta && fileName.EndsWith(".meta", StringComparison.OrdinalIgnoreCase)) continue;
+
+                    if (extFilter != null)
+                    {
+                        var ext = Path.GetExtension(file).ToLowerInvariant();
+                        if (!extFilter.Contains(ext)) continue;
+                    }
+
+                    filteredFiles.Add(JToken.FromObject(new
+                    {
+                        name = fileName,
+                        extension = Path.GetExtension(file),
+                        size = new FileInfo(file).Length
+                    }));
+                    fileCount++;
+                }
+
+                node["fileCount"] = fileCount;
+
+                if (currentDepth < maxDepth)
+                {
+                    node["files"] = filteredFiles;
+
+                    var subdirs = Directory.GetDirectories(dirPath);
+                    var children = new JArray();
+                    foreach (var subdir in subdirs)
+                    {
+                        var subDirName = Path.GetFileName(subdir);
+                        if (subDirName.StartsWith(".", StringComparison.Ordinal)) continue;
+                        children.Add(BuildDirectoryTree(subdir, projectRoot, maxDepth, currentDepth + 1, extFilter, includeMeta));
+                    }
+                    node["directories"] = children;
+                }
+                else
+                {
+                    var subdirCount = Directory.GetDirectories(dirPath).Length;
+                    node["directoryCount"] = subdirCount;
+                }
+            }
+            catch (Exception ex)
+            {
+                node["error"] = ex.Message;
+            }
+
+            return node;
+        }
+
+        // ───────── manage_prefab ─────────
+
+        private static AutonomousMcpToolResponse HandleManagePrefab(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get_status":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("get_status requires a valid target by instanceId or name.");
+
+                    var prefabType = PrefabUtility.GetPrefabAssetType(target);
+                    var prefabStatus = PrefabUtility.GetPrefabInstanceStatus(target);
+                    var isPartOfPrefab = PrefabUtility.IsPartOfAnyPrefab(target);
+                    var hasOverrides = PrefabUtility.HasPrefabInstanceAnyOverrides(target, false);
+                    var prefabPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(target);
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = target.name,
+                        prefabAssetType = prefabType.ToString(),
+                        prefabInstanceStatus = prefabStatus.ToString(),
+                        isPartOfPrefab,
+                        hasOverrides,
+                        prefabAssetPath = prefabPath
+                    }));
+                }
+
+                case "open":
+                {
+                    var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("assetPath") ?? string.Empty;
+                    GameObject prefabRoot = null;
+
+                    if (!string.IsNullOrWhiteSpace(assetPath))
+                    {
+                        prefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                    }
+                    else
+                    {
+                        var target = ResolveGameObject(args);
+                        if (target != null)
+                        {
+                            assetPath = PrefabUtility.GetPrefabAssetPathOfNearestInstanceRoot(target);
+                            if (!string.IsNullOrWhiteSpace(assetPath))
+                                prefabRoot = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+                        }
+                    }
+
+                    if (prefabRoot == null)
+                        return Error("Could not resolve prefab. Provide asset_path or a valid prefab instance name/instanceId.");
+
+                    AssetDatabase.OpenAsset(prefabRoot);
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        assetPath,
+                        opened = true
+                    }));
+                }
+
+                case "apply_overrides":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("apply_overrides requires a valid target by instanceId or name.");
+
+                    var outermost = PrefabUtility.GetOutermostPrefabInstanceRoot(target);
+                    if (outermost == null)
+                        return Error($"'{target.name}' is not a prefab instance.");
+
+                    PrefabUtility.ApplyPrefabInstance(outermost, InteractionMode.UserAction);
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = outermost.name,
+                        applied = true
+                    }));
+                }
+
+                case "revert_overrides":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("revert_overrides requires a valid target by instanceId or name.");
+
+                    var outermost = PrefabUtility.GetOutermostPrefabInstanceRoot(target);
+                    if (outermost == null)
+                        return Error($"'{target.name}' is not a prefab instance.");
+
+                    PrefabUtility.RevertPrefabInstance(outermost, InteractionMode.UserAction);
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = outermost.name,
+                        reverted = true
+                    }));
+                }
+
+                case "unpack":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("unpack requires a valid target by instanceId or name.");
+
+                    var completely = args.Value<bool?>("completely") ?? false;
+
+                    if (completely)
+                        PrefabUtility.UnpackPrefabInstance(target, PrefabUnpackMode.Completely, InteractionMode.UserAction);
+                    else
+                        PrefabUtility.UnpackPrefabInstance(target, PrefabUnpackMode.OutermostRoot, InteractionMode.UserAction);
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = target.name,
+                        unpacked = true,
+                        completely
+                    }));
+                }
+
+                default:
+                    return Error($"Unsupported manage_prefab action '{action}'. Supported: get_status, open, apply_overrides, revert_overrides, unpack.");
+            }
+        }
+
+        // ───────── manage_selection ─────────
+
+        private static AutonomousMcpToolResponse HandleManageSelection(JObject args)
+        {
+            var action = args.Value<string>("action") ?? "get";
+
+            switch (action)
+            {
+                case "get":
+                {
+                    var selected = Selection.gameObjects;
+                    var list = new JArray();
+                    foreach (var go in selected)
+                    {
+                        list.Add(JToken.FromObject(new
+                        {
+                            name = go.name,
+                            instanceId = go.GetInstanceID(),
+                            fullPath = GetFullPath(go.transform)
+                        }));
+                    }
+
+                    var activeObj = Selection.activeGameObject;
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        count = list.Count,
+                        activeObject = activeObj != null ? new
+                        {
+                            name = activeObj.name,
+                            instanceId = activeObj.GetInstanceID(),
+                            fullPath = GetFullPath(activeObj.transform)
+                        } : null,
+                        selection = list
+                    }));
+                }
+
+                case "set":
+                {
+                    var names = args["names"] as JArray;
+                    var instanceIds = args["instanceIds"] as JArray;
+                    var objects = new List<UnityEngine.Object>();
+
+                    if (instanceIds != null)
+                    {
+                        foreach (var id in instanceIds)
+                        {
+                            var obj = EditorUtility.InstanceIDToObject(id.Value<int>());
+                            if (obj != null) objects.Add(obj);
+                        }
+                    }
+                    else if (names != null)
+                    {
+                        foreach (var nameToken in names)
+                        {
+                            var go = GameObject.Find(nameToken.Value<string>());
+                            if (go != null) objects.Add(go);
+                        }
+                    }
+                    else
+                    {
+                        // Single object
+                        var target = ResolveGameObject(args);
+                        if (target != null) objects.Add(target);
+                    }
+
+                    Selection.objects = objects.ToArray();
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        selectedCount = objects.Count
+                    }));
+                }
+
+                case "clear":
+                {
+                    Selection.objects = new UnityEngine.Object[0];
+                    return Success(JToken.FromObject(new { action, cleared = true }));
+                }
+
+                case "focus":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target != null)
+                        Selection.activeGameObject = target;
+
+                    if (SceneView.lastActiveSceneView != null)
+                    {
+                        SceneView.lastActiveSceneView.FrameSelected();
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        focused = target?.name
+                    }));
+                }
+
+                default:
+                    return Error($"Unsupported manage_selection action '{action}'. Supported: get, set, clear, focus.");
+            }
+        }
+
+        // ───────── manage_layer_tag ─────────
+
+        private static AutonomousMcpToolResponse HandleManageLayerTag(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("get requires a valid target by instanceId or name.");
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = target.name,
+                        layer = LayerMask.LayerToName(target.layer),
+                        layerIndex = target.layer,
+                        tag = target.tag
+                    }));
+                }
+
+                case "set_layer":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("set_layer requires a valid target by instanceId or name.");
+
+                    var layerName = args.Value<string>("layer") ?? string.Empty;
+                    var layerIndex = args.Value<int?>("layer_index");
+                    var recursive = args.Value<bool?>("recursive") ?? false;
+
+                    int resolvedLayer;
+                    if (layerIndex.HasValue)
+                    {
+                        resolvedLayer = layerIndex.Value;
+                    }
+                    else if (!string.IsNullOrWhiteSpace(layerName))
+                    {
+                        resolvedLayer = LayerMask.NameToLayer(layerName);
+                        if (resolvedLayer < 0)
+                            return Error($"Layer '{layerName}' not found.");
+                    }
+                    else
+                    {
+                        return Error("set_layer requires 'layer' (name) or 'layer_index' (int).");
+                    }
+
+                    Undo.RecordObject(target, "MCP: Set Layer");
+                    target.layer = resolvedLayer;
+
+                    if (recursive)
+                    {
+                        foreach (Transform child in target.GetComponentsInChildren<Transform>(true))
+                        {
+                            Undo.RecordObject(child.gameObject, "MCP: Set Layer Recursive");
+                            child.gameObject.layer = resolvedLayer;
+                        }
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = target.name,
+                        layer = LayerMask.LayerToName(resolvedLayer),
+                        layerIndex = resolvedLayer,
+                        recursive
+                    }));
+                }
+
+                case "set_tag":
+                {
+                    var target = ResolveGameObject(args);
+                    if (target == null)
+                        return Error("set_tag requires a valid target by instanceId or name.");
+
+                    var newTag = args.Value<string>("tag") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(newTag))
+                        return Error("set_tag requires a non-empty 'tag' value.");
+
+                    Undo.RecordObject(target, "MCP: Set Tag");
+                    target.tag = newTag;
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gameObject = target.name,
+                        tag = target.tag
+                    }));
+                }
+
+                case "list_layers":
+                {
+                    var layers = new JArray();
+                    for (int i = 0; i < 32; i++)
+                    {
+                        var name = LayerMask.LayerToName(i);
+                        if (!string.IsNullOrWhiteSpace(name))
+                        {
+                            layers.Add(JToken.FromObject(new
+                            {
+                                index = i,
+                                name
+                            }));
+                        }
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        count = layers.Count,
+                        layers
+                    }));
+                }
+
+                case "list_tags":
+                {
+                    var tags = UnityEditorInternal.InternalEditorUtility.tags;
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        count = tags.Length,
+                        tags
+                    }));
+                }
+
+                case "list_sorting_layers":
+                {
+                    var sortingLayers = new JArray();
+                    foreach (var sl in SortingLayer.layers)
+                    {
+                        sortingLayers.Add(JToken.FromObject(new
+                        {
+                            id = sl.id,
+                            name = sl.name,
+                            value = sl.value
+                        }));
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        count = sortingLayers.Count,
+                        sortingLayers
+                    }));
+                }
+
+                default:
+                    return Error($"Unsupported manage_layer_tag action '{action}'. Supported: get, set_layer, set_tag, list_layers, list_tags, list_sorting_layers.");
+            }
+        }
+
+        // ───────── get_compilation_errors ─────────
+
+        private static AutonomousMcpToolResponse HandleGetCompilationErrors(JObject args)
+        {
+            var includeWarnings = args.Value<bool?>("include_warnings") ?? false;
+
+            // Force a refresh to get latest state
+            AssetDatabase.Refresh();
+
+            var messages = new JArray();
+
+            // Use CompilationPipeline if available
+            try
+            {
+                var pipelineType = Type.GetType("UnityEditor.Compilation.CompilationPipeline, UnityEditor");
+                if (pipelineType != null)
+                {
+                    var getMessagesMethod = pipelineType.GetMethod("GetCompilerMessages",
+                        BindingFlags.Public | BindingFlags.Static);
+                    if (getMessagesMethod != null)
+                    {
+                        // CompilationPipeline.GetCompilerMessages() not available in all versions
+                        // Fall through to console-based approach
+                    }
+                }
+            }
+            catch { /* fall through */ }
+
+            // Read compilation errors from console log entries
+            var logs = AutonomousMcpLogStore.Read("all", 500);
+            foreach (var logObj in logs)
+            {
+                var logToken = JToken.FromObject(logObj);
+                var logLevel = logToken.Value<string>("level") ?? "";
+                var logMessage = logToken.Value<string>("message") ?? "";
+
+                if (logLevel == "error" ||
+                    (includeWarnings && logLevel == "warning"))
+                {
+                    // Try to parse file:line from the message
+                    string file = null;
+                    int? line = null;
+
+                    // Pattern: "Assets/Scripts/MyScript.cs(42,10): error CS1234: ..."
+                    var match = Regex.Match(logMessage, @"^([\w/\\\.]+)\((\d+),?\d*\):\s*(error|warning)\s+(\w+):\s*(.*)$");
+                    if (match.Success)
+                    {
+                        file = match.Groups[1].Value;
+                        line = int.Parse(match.Groups[2].Value);
+                    }
+
+                    messages.Add(JToken.FromObject(new
+                    {
+                        level = logLevel,
+                        message = logMessage,
+                        file,
+                        line
+                    }));
+                }
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                isCompiling = EditorApplication.isCompiling,
+                hasErrors = messages.Count > 0,
+                count = messages.Count,
+                messages
+            }));
+        }
+
+        // ───────── manage_project_settings ─────────
+
+        private static AutonomousMcpToolResponse HandleManageProjectSettings(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get_player_settings":
+                {
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        companyName = PlayerSettings.companyName,
+                        productName = PlayerSettings.productName,
+                        bundleVersion = PlayerSettings.bundleVersion,
+                        defaultIsFullScreen = PlayerSettings.defaultIsNativeResolution,
+                        runInBackground = PlayerSettings.runInBackground,
+                        colorSpace = PlayerSettings.colorSpace.ToString(),
+                        apiCompatibilityLevel = PlayerSettings.GetApiCompatibilityLevel(EditorUserBuildSettings.selectedBuildTargetGroup).ToString(),
+                        scriptingBackend = PlayerSettings.GetScriptingBackend(EditorUserBuildSettings.selectedBuildTargetGroup).ToString(),
+                        targetPlatform = EditorUserBuildSettings.activeBuildTarget.ToString()
+                    }));
+                }
+
+                case "set_player_setting":
+                {
+                    var setting = args.Value<string>("setting") ?? string.Empty;
+                    var value = args.Value<string>("value") ?? string.Empty;
+
+                    if (string.IsNullOrWhiteSpace(setting))
+                        return Error("set_player_setting requires a non-empty 'setting' name.");
+
+                    switch (setting.ToLowerInvariant())
+                    {
+                        case "companyname":
+                            PlayerSettings.companyName = value;
+                            break;
+                        case "productname":
+                            PlayerSettings.productName = value;
+                            break;
+                        case "bundleversion":
+                            PlayerSettings.bundleVersion = value;
+                            break;
+                        case "runinbackground":
+                            PlayerSettings.runInBackground = bool.Parse(value);
+                            break;
+                        default:
+                            return Error($"Setting '{setting}' is not supported. Supported: companyName, productName, bundleVersion, runInBackground.");
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        setting,
+                        value,
+                        applied = true
+                    }));
+                }
+
+                case "get_quality_settings":
+                {
+                    var names = QualitySettings.names;
+                    var current = QualitySettings.GetQualityLevel();
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        currentLevel = current,
+                        currentName = names.Length > current ? names[current] : "Unknown",
+                        levels = names,
+                        shadowDistance = QualitySettings.shadowDistance,
+                        pixelLightCount = QualitySettings.pixelLightCount,
+                        antiAliasing = QualitySettings.antiAliasing,
+                        vSyncCount = QualitySettings.vSyncCount
+                    }));
+                }
+
+                case "get_physics_settings":
+                {
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        gravity = new { x = Physics.gravity.x, y = Physics.gravity.y, z = Physics.gravity.z },
+                        defaultSolverIterations = Physics.defaultSolverIterations,
+                        defaultSolverVelocityIterations = Physics.defaultSolverVelocityIterations,
+                        bounceThreshold = Physics.bounceThreshold,
+                        defaultContactOffset = Physics.defaultContactOffset,
+                        sleepThreshold = Physics.sleepThreshold,
+                        autoSimulation = Physics.autoSimulation
+                    }));
+                }
+
+                case "get_time_settings":
+                {
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        fixedDeltaTime = Time.fixedDeltaTime,
+                        maximumDeltaTime = Time.maximumDeltaTime,
+                        timeScale = Time.timeScale,
+                        maximumParticleDeltaTime = Time.maximumParticleDeltaTime
+                    }));
+                }
+
+                default:
+                    return Error($"Unsupported manage_project_settings action '{action}'. Supported: get_player_settings, set_player_setting, get_quality_settings, get_physics_settings, get_time_settings.");
+            }
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)

@@ -99,6 +99,62 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     notes: "Material actions: get (info), get_properties (all shader properties with values), set_property (color/float/vector/int), list_materials (all materials on a Renderer). Uses sharedMaterials to avoid leaks."
   },
   {
+    tool: "execute_csharp",
+    category: "editor",
+    destructive: true,
+    supportsBatch: false,
+    notes: "Execute arbitrary C# code in the Unity Editor. The ultimate escape hatch — code is compiled in-memory and executed immediately. Has access to UnityEngine, UnityEditor, and all loaded assemblies. Returns the result as JSON."
+  },
+  {
+    tool: "search_hierarchy",
+    category: "scene",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Deep scene search with filters: name_pattern (regex), component_type, tag, layer, active_only, include_inactive, include_components. Returns matching GameObjects with full context."
+  },
+  {
+    tool: "get_project_structure",
+    category: "assets",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Get asset folder tree with file counts and types. Params: path (default 'Assets'), depth (1-10), extensions (comma-separated filter), include_meta."
+  },
+  {
+    tool: "manage_prefab",
+    category: "editor",
+    destructive: true,
+    supportsBatch: true,
+    notes: "Prefab workflow: get_status (type, overrides, asset path), open (prefab mode), apply_overrides, revert_overrides, unpack (outermost or completely)."
+  },
+  {
+    tool: "manage_selection",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Editor selection: get (current selection), set (by names or instanceIds), clear, focus (frame in scene view)."
+  },
+  {
+    tool: "manage_layer_tag",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Layer/tag management: get (layer+tag of GO), set_layer (by name or index, recursive option), set_tag, list_layers, list_tags, list_sorting_layers."
+  },
+  {
+    tool: "get_compilation_errors",
+    category: "script",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Get detailed compilation errors with file path and line numbers. Option to include warnings. Parses Unity console for structured error data."
+  },
+  {
+    tool: "manage_project_settings",
+    category: "editor",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Read/write project settings: get_player_settings, set_player_setting (companyName, productName, bundleVersion, runInBackground), get_quality_settings, get_physics_settings, get_time_settings."
+  },
+  {
     tool: "validate_script",
     category: "script",
     destructive: false,

@@ -142,10 +142,10 @@ export async function startMcpServer(): Promise<void> {
 
   server.tool(
     "manage_script",
-    "Create or update a C# script file in the Unity project. Triggers recompilation.",
+    "Create or update a C# script file in the Unity project. Supports both Assets/ and Packages/ paths. Triggers recompilation.",
     {
       action: z.literal("create_or_update").describe("Script action"),
-      scriptPath: z.string().min(1).describe("Asset path starting with 'Assets/' (e.g. 'Assets/Scripts/MyScript.cs')"),
+      scriptPath: z.string().min(1).describe("Path starting with 'Assets/' or 'Packages/' (e.g. 'Assets/Scripts/MyScript.cs')"),
       contents: z.string().min(1).describe("Full C# source code contents of the script"),
     },
     async (input) => callUnity("manage_script", input)
@@ -248,6 +248,121 @@ export async function startMcpServer(): Promise<void> {
       value: z.unknown().optional().describe("Property value: float, int, {r,g,b,a} for color, {x,y,z,w} for vector"),
     },
     async (input) => callUnity("manage_material", input)
+  );
+
+  // ── execute_csharp ──
+
+  server.tool(
+    "execute_csharp",
+    "Execute arbitrary C# code in the Unity Editor. The ultimate escape hatch — code is compiled in-memory with full access to UnityEngine, UnityEditor, and all loaded assemblies. The code is wrapped in a static method body: write statements that optionally end with 'return <expr>;' to get a result back.",
+    {
+      code: z.string().min(1).describe("C# code to execute. Written as method body statements, e.g. 'return GameObject.FindObjectsOfType<Camera>().Length;'"),
+      return_result: z.boolean().optional().describe("Whether to capture and return the result (default: true)"),
+    },
+    async (input) => callUnity("execute_csharp", input)
+  );
+
+  // ── search_hierarchy ──
+
+  server.tool(
+    "search_hierarchy",
+    "Deep scene search with powerful filters. Find GameObjects by regex name, component type, tag, layer, active state. Returns rich context including components list.",
+    {
+      name_pattern: z.string().optional().describe("Regex pattern to match GameObject names (case-insensitive)"),
+      component_type: z.string().optional().describe("Filter by component type name (e.g. 'Animator', 'MeshRenderer')"),
+      tag: z.string().optional().describe("Filter by tag (e.g. 'Player', 'MainCamera')"),
+      layer: z.string().optional().describe("Filter by layer name or index"),
+      active_only: z.boolean().optional().describe("Only return objects active in hierarchy (default: false)"),
+      include_inactive: z.boolean().optional().describe("Include inactive objects in search (default: true)"),
+      include_components: z.boolean().optional().describe("Include component list on each result (default: false)"),
+      limit: z.number().int().optional().describe("Max results to return (default: 100, max: 500)"),
+    },
+    async (input) => callUnity("search_hierarchy", input)
+  );
+
+  // ── get_project_structure ──
+
+  server.tool(
+    "get_project_structure",
+    "Get the asset folder tree structure with file counts, types, and sizes. Essential for understanding project layout.",
+    {
+      path: z.string().optional().describe("Root path to scan (default: 'Assets')"),
+      depth: z.number().int().min(1).max(10).optional().describe("Max folder depth to recurse (default: 3)"),
+      extensions: z.string().optional().describe("Comma-separated file extension filter (e.g. '.cs,.shader,.prefab')"),
+      include_meta: z.boolean().optional().describe("Include .meta files (default: false)"),
+    },
+    async (input) => callUnity("get_project_structure", input)
+  );
+
+  // ── manage_prefab ──
+
+  server.tool(
+    "manage_prefab",
+    "Prefab workflow: get_status (type, overrides, asset path), open (enter prefab mode), apply_overrides, revert_overrides, unpack.",
+    {
+      action: z.enum(["get_status", "open", "apply_overrides", "revert_overrides", "unpack"])
+        .describe("Prefab action"),
+      ...zInstanceIdOrName,
+      asset_path: z.string().optional().describe("Prefab asset path for open action (e.g. 'Assets/Prefabs/Player.prefab')"),
+      completely: z.boolean().optional().describe("For unpack: true = unpack completely, false = outermost only (default: false)"),
+    },
+    async (input) => callUnity("manage_prefab", input)
+  );
+
+  // ── manage_selection ──
+
+  server.tool(
+    "manage_selection",
+    "Control Unity Editor selection: get current selection, set selection, clear, or focus/frame selected object in scene view.",
+    {
+      action: z.enum(["get", "set", "clear", "focus"]).optional().describe("Selection action (default: get)"),
+      ...zInstanceIdOrName,
+      names: z.array(z.string()).optional().describe("Array of GameObject names for set action"),
+      instanceIds: z.array(z.number()).optional().describe("Array of instance IDs for set action"),
+    },
+    async (input) => callUnity("manage_selection", input)
+  );
+
+  // ── manage_layer_tag ──
+
+  server.tool(
+    "manage_layer_tag",
+    "Manage layers and tags: get (layer+tag of GO), set_layer, set_tag, list_layers, list_tags, list_sorting_layers.",
+    {
+      action: z.enum(["get", "set_layer", "set_tag", "list_layers", "list_tags", "list_sorting_layers"])
+        .describe("Layer/tag action"),
+      ...zInstanceIdOrName,
+      layer: z.string().optional().describe("Layer name for set_layer"),
+      layer_index: z.number().int().optional().describe("Layer index for set_layer (alternative to name)"),
+      tag: z.string().optional().describe("Tag name for set_tag"),
+      recursive: z.boolean().optional().describe("Apply layer change to all children (default: false)"),
+    },
+    async (input) => callUnity("manage_layer_tag", input)
+  );
+
+  // ── get_compilation_errors ──
+
+  server.tool(
+    "get_compilation_errors",
+    "Get detailed compilation errors with file paths and line numbers. More structured than read_console for debugging script issues.",
+    {
+      include_warnings: z.boolean().optional().describe("Include warnings in addition to errors (default: false)"),
+    },
+    async (input) => callUnity("get_compilation_errors", input)
+  );
+
+  // ── manage_project_settings ──
+
+  server.tool(
+    "manage_project_settings",
+    "Read/write Unity project settings: player settings, quality settings, physics settings, time settings.",
+    {
+      action: z.enum(["get_player_settings", "set_player_setting", "get_quality_settings", "get_physics_settings", "get_time_settings"])
+        .describe("Settings action"),
+      setting: z.string().optional().describe("Setting name for set_player_setting (companyName, productName, bundleVersion, runInBackground)"),
+      value: z.string().optional().describe("New value for set_player_setting"),
+    },
+    async (input) => callUnity("manage_project_settings", input)
   );
 
   // ── validate_script ──
