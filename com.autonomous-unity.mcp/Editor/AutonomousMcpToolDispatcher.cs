@@ -59,6 +59,12 @@ namespace AutonomousMcp.Editor
                         return HandleManageEditor(args);
                     case "read_script":
                         return HandleReadScript(args);
+                    case "capture_screenshot":
+                        return HandleCaptureScreenshot(args);
+                    case "manage_animator":
+                        return HandleManageAnimator(args);
+                    case "manage_material":
+                        return HandleManageMaterial(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -118,8 +124,11 @@ namespace AutonomousMcp.Editor
                     "manage_script",
                     "manage_asset",
                     "manage_editor",
+                    "manage_animator",
+                    "manage_material",
                     "read_script",
                     "execute_menu_item",
+                    "capture_screenshot",
                     "validate_script",
                     "run_tests",
                     "get_test_job",
@@ -132,7 +141,10 @@ namespace AutonomousMcp.Editor
                     manage_component = new[] { "add", "remove", "get_all", "get_properties", "set_property" },
                     manage_script = new[] { "create_or_update" },
                     manage_asset = new[] { "find", "instantiate_prefab" },
-                    manage_editor = new[] { "enter_play_mode", "exit_play_mode", "pause", "step", "undo", "redo" }
+                    manage_editor = new[] { "enter_play_mode", "exit_play_mode", "pause", "step", "undo", "redo" },
+                    manage_animator = new[] { "get_parameters", "set_parameter", "get_layers", "get_states", "get_current_state" },
+                    manage_material = new[] { "get", "get_properties", "set_property", "list_materials" },
+                    capture_screenshot = new[] { "scene", "game" }
                 }
             }));
         }
@@ -1348,6 +1360,643 @@ namespace AutonomousMcp.Editor
                 lineCount,
                 sizeBytes = contents.Length,
                 contents
+            }));
+        }
+
+        // ───────── capture_screenshot ─────────
+
+        private static AutonomousMcpToolResponse HandleCaptureScreenshot(JObject args)
+        {
+            var source = (args.Value<string>("source") ?? "scene").Trim().ToLowerInvariant();
+            var width = args.Value<int?>("width") ?? 512;
+            var height = args.Value<int?>("height") ?? 512;
+            width = Math.Clamp(width, 64, 2048);
+            height = Math.Clamp(height, 64, 2048);
+
+            Texture2D tex = null;
+
+            try
+            {
+                if (source == "game")
+                {
+                    var gameView = EditorWindow.GetWindow(Type.GetType("UnityEditor.GameView,UnityEditor"), false, null, false);
+                    if (gameView != null)
+                    {
+                        gameView.Repaint();
+                        var rt = new RenderTexture(width, height, 24);
+                        var cam = Camera.main;
+                        if (cam == null)
+                        {
+                            var allCams = Camera.allCameras;
+                            if (allCams.Length > 0) cam = allCams[0];
+                        }
+
+                        if (cam != null)
+                        {
+                            var prevRT = cam.targetTexture;
+                            cam.targetTexture = rt;
+                            cam.Render();
+                            cam.targetTexture = prevRT;
+
+                            RenderTexture.active = rt;
+                            tex = new Texture2D(width, height, TextureFormat.RGB24, false);
+                            tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                            tex.Apply();
+                            RenderTexture.active = null;
+                            UnityEngine.Object.DestroyImmediate(rt);
+                        }
+                        else
+                        {
+                            UnityEngine.Object.DestroyImmediate(rt);
+                            return Error("No camera found for game view capture.");
+                        }
+                    }
+                    else
+                    {
+                        return Error("Game view not available.");
+                    }
+                }
+                else
+                {
+                    var sceneView = SceneView.lastActiveSceneView;
+                    if (sceneView == null)
+                        return Error("No active SceneView found.");
+
+                    var cam = sceneView.camera;
+                    if (cam == null)
+                        return Error("SceneView camera not available.");
+
+                    var rt = new RenderTexture(width, height, 24);
+                    cam.targetTexture = rt;
+                    cam.Render();
+                    cam.targetTexture = null;
+
+                    RenderTexture.active = rt;
+                    tex = new Texture2D(width, height, TextureFormat.RGB24, false);
+                    tex.ReadPixels(new Rect(0, 0, width, height), 0, 0);
+                    tex.Apply();
+                    RenderTexture.active = null;
+                    UnityEngine.Object.DestroyImmediate(rt);
+                }
+
+                if (tex == null)
+                    return Error("Failed to capture screenshot.");
+
+                var png = tex.EncodeToPNG();
+                UnityEngine.Object.DestroyImmediate(tex);
+                var base64 = Convert.ToBase64String(png);
+
+                // Optionally save to file
+                var savePath = args.Value<string>("save_path") ?? args.Value<string>("savePath");
+                if (!string.IsNullOrWhiteSpace(savePath))
+                {
+                    var projectRoot = Directory.GetParent(Application.dataPath)?.FullName ?? "";
+                    var fullSavePath = savePath.StartsWith("Assets/", StringComparison.Ordinal)
+                        ? Path.Combine(projectRoot, savePath.Replace('/', Path.DirectorySeparatorChar))
+                        : savePath;
+                    var dir = Path.GetDirectoryName(fullSavePath);
+                    if (!string.IsNullOrEmpty(dir)) Directory.CreateDirectory(dir);
+                    File.WriteAllBytes(fullSavePath, png);
+                }
+
+                return Success(JToken.FromObject(new
+                {
+                    source,
+                    width,
+                    height,
+                    sizeBytes = png.Length,
+                    savedTo = string.IsNullOrWhiteSpace(savePath) ? null : savePath,
+                    base64png = base64
+                }));
+            }
+            catch (Exception ex)
+            {
+                if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
+                return Error($"Screenshot capture failed: {ex.Message}");
+            }
+        }
+
+        // ───────── manage_animator ─────────
+
+        private static AutonomousMcpToolResponse HandleManageAnimator(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get_parameters":
+                    return HandleGetAnimatorParameters(args);
+                case "set_parameter":
+                    return HandleSetAnimatorParameter(args);
+                case "get_layers":
+                    return HandleGetAnimatorLayers(args);
+                case "get_states":
+                    return HandleGetAnimatorStates(args);
+                case "get_current_state":
+                    return HandleGetCurrentAnimatorState(args);
+                default:
+                    return Error($"Unsupported manage_animator action '{action}'.");
+            }
+        }
+
+        private static Animator ResolveAnimator(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null) return null;
+            return target.GetComponent<Animator>() ?? target.GetComponentInChildren<Animator>();
+        }
+
+        private static UnityEditor.Animations.AnimatorController ResolveAnimatorController(Animator animator)
+        {
+            if (animator == null || animator.runtimeAnimatorController == null) return null;
+            // Handle AnimatorOverrideController
+            var rac = animator.runtimeAnimatorController;
+            if (rac is AnimatorOverrideController aoc)
+                rac = aoc.runtimeAnimatorController;
+            return rac as UnityEditor.Animations.AnimatorController;
+        }
+
+        private static AutonomousMcpToolResponse HandleGetAnimatorParameters(JObject args)
+        {
+            var animator = ResolveAnimator(args);
+            if (animator == null)
+                return Error("No Animator found on the target GameObject.");
+
+            var controller = ResolveAnimatorController(animator);
+            if (controller == null)
+                return Error("No AnimatorController assigned to the Animator.");
+
+            var paramList = new JArray();
+            foreach (var param in controller.parameters)
+            {
+                object currentValue = null;
+                if (EditorApplication.isPlaying)
+                {
+                    switch (param.type)
+                    {
+                        case AnimatorControllerParameterType.Float: currentValue = animator.GetFloat(param.name); break;
+                        case AnimatorControllerParameterType.Int: currentValue = animator.GetInteger(param.name); break;
+                        case AnimatorControllerParameterType.Bool: currentValue = animator.GetBool(param.name); break;
+                        case AnimatorControllerParameterType.Trigger: currentValue = "(trigger)"; break;
+                    }
+                }
+                else
+                {
+                    switch (param.type)
+                    {
+                        case AnimatorControllerParameterType.Float: currentValue = param.defaultFloat; break;
+                        case AnimatorControllerParameterType.Int: currentValue = param.defaultInt; break;
+                        case AnimatorControllerParameterType.Bool: currentValue = param.defaultBool; break;
+                        case AnimatorControllerParameterType.Trigger: currentValue = "(trigger)"; break;
+                    }
+                }
+
+                paramList.Add(JToken.FromObject(new
+                {
+                    name = param.name,
+                    type = param.type.ToString(),
+                    value = currentValue
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_parameters",
+                gameObject = (ResolveGameObject(args))?.name,
+                controllerName = controller.name,
+                count = paramList.Count,
+                parameters = paramList
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetAnimatorParameter(JObject args)
+        {
+            var animator = ResolveAnimator(args);
+            if (animator == null)
+                return Error("No Animator found on the target GameObject.");
+
+            var paramName = args.Value<string>("parameter") ?? args.Value<string>("param_name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(paramName))
+                return Error("set_parameter requires a non-empty parameter name.");
+
+            var controller = ResolveAnimatorController(animator);
+            if (controller == null)
+                return Error("No AnimatorController assigned.");
+
+            AnimatorControllerParameter targetParam = null;
+            foreach (var p in controller.parameters)
+            {
+                if (string.Equals(p.name, paramName, StringComparison.Ordinal))
+                {
+                    targetParam = p;
+                    break;
+                }
+            }
+
+            if (targetParam == null)
+                return Error($"Parameter '{paramName}' not found on animator controller.");
+
+            var valueToken = args["value"];
+
+            if (EditorApplication.isPlaying)
+            {
+                switch (targetParam.type)
+                {
+                    case AnimatorControllerParameterType.Float:
+                        animator.SetFloat(paramName, valueToken?.Value<float>() ?? 0f);
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        animator.SetInteger(paramName, valueToken?.Value<int>() ?? 0);
+                        break;
+                    case AnimatorControllerParameterType.Bool:
+                        animator.SetBool(paramName, valueToken?.Value<bool>() ?? false);
+                        break;
+                    case AnimatorControllerParameterType.Trigger:
+                        animator.SetTrigger(paramName);
+                        break;
+                }
+            }
+            else
+            {
+                // Edit mode: modify the default value on the controller asset
+                switch (targetParam.type)
+                {
+                    case AnimatorControllerParameterType.Float:
+                        targetParam.defaultFloat = valueToken?.Value<float>() ?? 0f;
+                        break;
+                    case AnimatorControllerParameterType.Int:
+                        targetParam.defaultInt = valueToken?.Value<int>() ?? 0;
+                        break;
+                    case AnimatorControllerParameterType.Bool:
+                        targetParam.defaultBool = valueToken?.Value<bool>() ?? false;
+                        break;
+                }
+                EditorUtility.SetDirty(controller);
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "set_parameter",
+                parameter = paramName,
+                type = targetParam.type.ToString(),
+                isPlaying = EditorApplication.isPlaying
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetAnimatorLayers(JObject args)
+        {
+            var animator = ResolveAnimator(args);
+            if (animator == null)
+                return Error("No Animator found on the target GameObject.");
+
+            var controller = ResolveAnimatorController(animator);
+            if (controller == null)
+                return Error("No AnimatorController assigned.");
+
+            var layerList = new JArray();
+            for (int i = 0; i < controller.layers.Length; i++)
+            {
+                var layer = controller.layers[i];
+                layerList.Add(JToken.FromObject(new
+                {
+                    index = i,
+                    name = layer.name,
+                    defaultWeight = layer.defaultWeight,
+                    blendingMode = layer.blendingMode.ToString(),
+                    stateCount = layer.stateMachine.states.Length
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_layers",
+                controllerName = controller.name,
+                count = layerList.Count,
+                layers = layerList
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetAnimatorStates(JObject args)
+        {
+            var animator = ResolveAnimator(args);
+            if (animator == null)
+                return Error("No Animator found on the target GameObject.");
+
+            var controller = ResolveAnimatorController(animator);
+            if (controller == null)
+                return Error("No AnimatorController assigned.");
+
+            var layerIndex = args.Value<int?>("layer_index") ?? args.Value<int?>("layerIndex") ?? 0;
+            if (layerIndex < 0 || layerIndex >= controller.layers.Length)
+                return Error($"Layer index {layerIndex} out of range (0..{controller.layers.Length - 1}).");
+
+            var sm = controller.layers[layerIndex].stateMachine;
+            var stateList = new JArray();
+
+            foreach (var childState in sm.states)
+            {
+                var state = childState.state;
+                var transitions = new JArray();
+                foreach (var t in state.transitions)
+                {
+                    transitions.Add(JToken.FromObject(new
+                    {
+                        destination = t.destinationState?.name ?? "(exit)",
+                        hasExitTime = t.hasExitTime,
+                        duration = t.duration,
+                        conditionCount = t.conditions.Length
+                    }));
+                }
+
+                stateList.Add(JToken.FromObject(new
+                {
+                    name = state.name,
+                    tag = state.tag,
+                    speed = state.speed,
+                    motion = state.motion?.name,
+                    transitionCount = state.transitions.Length,
+                    transitions
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_states",
+                controllerName = controller.name,
+                layerIndex,
+                layerName = controller.layers[layerIndex].name,
+                count = stateList.Count,
+                states = stateList
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetCurrentAnimatorState(JObject args)
+        {
+            if (!EditorApplication.isPlaying)
+                return Error("get_current_state requires Play mode.");
+
+            var animator = ResolveAnimator(args);
+            if (animator == null)
+                return Error("No Animator found on the target GameObject.");
+
+            var layerIndex = args.Value<int?>("layer_index") ?? args.Value<int?>("layerIndex") ?? 0;
+            var stateInfo = animator.GetCurrentAnimatorStateInfo(layerIndex);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_current_state",
+                layerIndex,
+                normalizedTime = stateInfo.normalizedTime,
+                length = stateInfo.length,
+                speed = stateInfo.speed,
+                isLooping = stateInfo.loop,
+                tagHash = stateInfo.tagHash
+            }));
+        }
+
+        // ───────── manage_material ─────────
+
+        private static AutonomousMcpToolResponse HandleManageMaterial(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get":
+                    return HandleGetMaterial(args);
+                case "get_properties":
+                    return HandleGetMaterialProperties(args);
+                case "set_property":
+                    return HandleSetMaterialProperty(args);
+                case "list_materials":
+                    return HandleListMaterials(args);
+                default:
+                    return Error($"Unsupported manage_material action '{action}'.");
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleGetMaterial(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("get requires a valid target by instanceId or name.");
+
+            var renderer = target.GetComponent<Renderer>();
+            if (renderer == null)
+                return Error($"No Renderer found on '{target.name}'.");
+
+            var materialIndex = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex") ?? 0;
+            var materials = renderer.sharedMaterials;
+            if (materialIndex < 0 || materialIndex >= materials.Length)
+                return Error($"Material index {materialIndex} out of range (0..{materials.Length - 1}).");
+
+            var mat = materials[materialIndex];
+            if (mat == null)
+                return Error("Material at that index is null.");
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get",
+                gameObject = target.name,
+                materialIndex,
+                materialName = mat.name,
+                shader = mat.shader?.name,
+                renderQueue = mat.renderQueue,
+                passCount = mat.passCount,
+                instanceId = mat.GetInstanceID()
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetMaterialProperties(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("get_properties requires a valid target by instanceId or name.");
+
+            var renderer = target.GetComponent<Renderer>();
+            if (renderer == null)
+                return Error($"No Renderer found on '{target.name}'.");
+
+            var materialIndex = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex") ?? 0;
+            var materials = renderer.sharedMaterials;
+            if (materialIndex < 0 || materialIndex >= materials.Length)
+                return Error($"Material index {materialIndex} out of range.");
+
+            var mat = materials[materialIndex];
+            if (mat == null) return Error("Material is null.");
+
+            var shader = mat.shader;
+            var propList = new JArray();
+            int propCount = shader.GetPropertyCount();
+
+            for (int i = 0; i < propCount; i++)
+            {
+                var propName = shader.GetPropertyName(i);
+                var propType = shader.GetPropertyType(i);
+                object value = null;
+
+                switch (propType)
+                {
+                    case UnityEngine.Rendering.ShaderPropertyType.Color:
+                        var c = mat.GetColor(propName);
+                        value = new { r = c.r, g = c.g, b = c.b, a = c.a };
+                        break;
+                    case UnityEngine.Rendering.ShaderPropertyType.Float:
+                    case UnityEngine.Rendering.ShaderPropertyType.Range:
+                        value = mat.GetFloat(propName);
+                        break;
+                    case UnityEngine.Rendering.ShaderPropertyType.Vector:
+                        var v = mat.GetVector(propName);
+                        value = new { x = v.x, y = v.y, z = v.z, w = v.w };
+                        break;
+                    case UnityEngine.Rendering.ShaderPropertyType.Texture:
+                        var tex = mat.GetTexture(propName);
+                        value = tex != null ? tex.name : null;
+                        break;
+#if UNITY_2021_1_OR_NEWER
+                    case UnityEngine.Rendering.ShaderPropertyType.Int:
+                        value = mat.GetInteger(propName);
+                        break;
+#endif
+                }
+
+                propList.Add(JToken.FromObject(new
+                {
+                    name = propName,
+                    displayName = shader.GetPropertyDescription(i),
+                    type = propType.ToString(),
+                    value
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_properties",
+                gameObject = target.name,
+                materialName = mat.name,
+                shader = shader.name,
+                count = propList.Count,
+                properties = propList
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetMaterialProperty(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("set_property requires a valid target by instanceId or name.");
+
+            var renderer = target.GetComponent<Renderer>();
+            if (renderer == null)
+                return Error($"No Renderer found on '{target.name}'.");
+
+            var materialIndex = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex") ?? 0;
+            var materials = renderer.sharedMaterials;
+            if (materialIndex < 0 || materialIndex >= materials.Length)
+                return Error($"Material index {materialIndex} out of range.");
+
+            var mat = materials[materialIndex];
+            if (mat == null) return Error("Material is null.");
+
+            var propName = args.Value<string>("property") ?? args.Value<string>("property_name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(propName))
+                return Error("set_property requires a non-empty property name.");
+
+            if (!mat.HasProperty(propName))
+                return Error($"Material '{mat.name}' has no property '{propName}'.");
+
+            var valueToken = args["value"];
+            if (valueToken == null)
+                return Error("set_property requires a 'value' parameter.");
+
+            Undo.RecordObject(mat, "MCP: Set Material Property");
+
+            var shader = mat.shader;
+            int propIdx = shader.FindPropertyIndex(propName);
+            if (propIdx < 0)
+                return Error($"Property '{propName}' not found on shader.");
+
+            var propType = shader.GetPropertyType(propIdx);
+            bool written = false;
+
+            switch (propType)
+            {
+                case UnityEngine.Rendering.ShaderPropertyType.Color:
+                    if (valueToken is JObject cObj)
+                    {
+                        mat.SetColor(propName, new Color(
+                            cObj.Value<float?>("r") ?? 0, cObj.Value<float?>("g") ?? 0,
+                            cObj.Value<float?>("b") ?? 0, cObj.Value<float?>("a") ?? 1));
+                        written = true;
+                    }
+                    break;
+                case UnityEngine.Rendering.ShaderPropertyType.Float:
+                case UnityEngine.Rendering.ShaderPropertyType.Range:
+                    mat.SetFloat(propName, valueToken.Value<float>());
+                    written = true;
+                    break;
+                case UnityEngine.Rendering.ShaderPropertyType.Vector:
+                    if (valueToken is JObject vObj)
+                    {
+                        mat.SetVector(propName, new Vector4(
+                            vObj.Value<float?>("x") ?? 0, vObj.Value<float?>("y") ?? 0,
+                            vObj.Value<float?>("z") ?? 0, vObj.Value<float?>("w") ?? 0));
+                        written = true;
+                    }
+                    break;
+#if UNITY_2021_1_OR_NEWER
+                case UnityEngine.Rendering.ShaderPropertyType.Int:
+                    mat.SetInteger(propName, valueToken.Value<int>());
+                    written = true;
+                    break;
+#endif
+            }
+
+            if (!written)
+                return Error($"Could not write to property '{propName}' (type: {propType}).");
+
+            EditorUtility.SetDirty(mat);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "set_property",
+                gameObject = target.name,
+                materialName = mat.name,
+                property = propName,
+                written = true
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleListMaterials(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("list_materials requires a valid target by instanceId or name.");
+
+            var renderer = target.GetComponent<Renderer>();
+            if (renderer == null)
+                return Error($"No Renderer found on '{target.name}'.");
+
+            var matList = new JArray();
+            var materials = renderer.sharedMaterials;
+            for (int i = 0; i < materials.Length; i++)
+            {
+                var m = materials[i];
+                matList.Add(JToken.FromObject(new
+                {
+                    index = i,
+                    name = m?.name ?? "(null)",
+                    shader = m?.shader?.name ?? "(null)",
+                    instanceId = m?.GetInstanceID() ?? 0
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "list_materials",
+                gameObject = target.name,
+                count = matList.Count,
+                materials = matList
             }));
         }
 

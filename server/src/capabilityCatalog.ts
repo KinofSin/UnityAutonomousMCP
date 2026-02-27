@@ -78,6 +78,27 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     notes: "Execute any Unity Editor menu item by path (e.g. 'Tools/My Tool'). Marked destructive as menu items can have side effects."
   },
   {
+    tool: "capture_screenshot",
+    category: "editor",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Capture Scene or Game view as PNG. Params: source (scene|game), width, height (64-2048), save_path (optional). Returns base64png."
+  },
+  {
+    tool: "manage_animator",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Animator introspection: get_parameters (with live values in Play mode), set_parameter (runtime or default), get_layers, get_states (with transitions), get_current_state (Play mode only). Resolves AnimatorOverrideController automatically."
+  },
+  {
+    tool: "manage_material",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Material actions: get (info), get_properties (all shader properties with values), set_property (color/float/vector/int), list_materials (all materials on a Renderer). Uses sharedMaterials to avoid leaks."
+  },
+  {
     tool: "validate_script",
     category: "script",
     destructive: false,
