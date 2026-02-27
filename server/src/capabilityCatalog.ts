@@ -1,6 +1,6 @@
 export interface ToolCapability {
   tool: string;
-  category: "editor" | "assets" | "scene" | "script" | "runtime" | "agent";
+  category: "editor" | "assets" | "scene" | "script" | "runtime" | "agent" | "knowledge";
   destructive: boolean;
   supportsBatch: boolean;
   notes: string;
@@ -153,6 +153,48 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     destructive: false,
     supportsBatch: false,
     notes: "Read/write project settings: get_player_settings, set_player_setting (companyName, productName, bundleVersion, runInBackground), get_quality_settings, get_physics_settings, get_time_settings."
+  },
+  {
+    tool: "get_installed_packages",
+    category: "assets",
+    destructive: false,
+    supportsBatch: false,
+    notes: "List all installed Unity packages from manifest.json with version, source (git/local/registry), and VRC ecosystem identification. Flags 40+ known VRChat packages (MA, VRCFury, AAO, Poiyomi, lilToon, etc.) with descriptions. Also detects loaded framework assemblies."
+  },
+  {
+    tool: "list_shaders",
+    category: "assets",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Enumerate all shaders in the project with family detection (Poiyomi, lilToon, SCSS, ORL, etc.). Optional property listing. Filter by name. Identifies VRC ecosystem shaders with descriptions."
+  },
+  {
+    tool: "get_asset_info",
+    category: "assets",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Deep inspect any asset by path. For prefabs: hierarchy, components, VRC ecosystem components. For materials: shader, textures, render queue. For textures: dimensions, format, compression. For AnimatorControllers: layers, states, parameters. For AnimationClips: curves, bindings."
+  },
+  {
+    tool: "scan_armature",
+    category: "scene",
+    destructive: false,
+    supportsBatch: false,
+    notes: "VRChat avatar armature analysis: bone tree, humanoid rig mapping (all HumanBodyBones), PhysBone chains, SkinnedMeshRenderer info (vertex/blendshape/material counts, root bone). Essential for understanding avatar structure before attaching accessories."
+  },
+  {
+    tool: "scan_avatar",
+    category: "scene",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Comprehensive VRChat avatar scan: VRCAvatarDescriptor (lip sync, view position, expression parameters with cost/budget), PhysBones, PhysBoneColliders, Contacts, installed frameworks (MA, VRCFury, AAO, lilycalInventory), mesh stats (polygons, materials, blendshapes), shader usage, bone count."
+  },
+  {
+    tool: "get_vrc_knowledge",
+    category: "knowledge",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Query the VRChat ecosystem knowledge base covering 150+ tools across 21 categories. Search by category, tool name, or free text. Returns conventions, best practices, tool descriptions, and best-pick recommendations for shaders, optimization, toggles, expressions, physics, and more."
   },
   {
     tool: "validate_script",

@@ -82,6 +82,16 @@ namespace AutonomousMcp.Editor
                         return HandleGetCompilationErrors(args);
                     case "manage_project_settings":
                         return HandleManageProjectSettings(args);
+                    case "get_installed_packages":
+                        return HandleGetInstalledPackages(args);
+                    case "list_shaders":
+                        return HandleListShaders(args);
+                    case "get_asset_info":
+                        return HandleGetAssetInfo(args);
+                    case "scan_armature":
+                        return HandleScanArmature(args);
+                    case "scan_avatar":
+                        return HandleScanAvatar(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -154,6 +164,11 @@ namespace AutonomousMcp.Editor
                     "manage_layer_tag",
                     "get_compilation_errors",
                     "manage_project_settings",
+                    "get_installed_packages",
+                    "list_shaders",
+                    "get_asset_info",
+                    "scan_armature",
+                    "scan_avatar",
                     "validate_script",
                     "run_tests",
                     "get_test_job",
@@ -2905,6 +2920,823 @@ public static class __McpEval
                 default:
                     return Error($"Unsupported manage_project_settings action '{action}'. Supported: get_player_settings, set_player_setting, get_quality_settings, get_physics_settings, get_time_settings.");
             }
+        }
+
+        // ───────── get_installed_packages ─────────
+
+        private static AutonomousMcpToolResponse HandleGetInstalledPackages(JObject args)
+        {
+            var includeBuiltin = args.Value<bool?>("include_builtin") ?? false;
+
+            var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+            if (string.IsNullOrEmpty(projectRoot))
+                return Error("Failed to resolve project root.");
+
+            // Known VRC ecosystem packages with descriptions
+            var knownPackages = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                {"com.vrchat.avatars", "VRChat Avatars SDK"},
+                {"com.vrchat.worlds", "VRChat Worlds SDK"},
+                {"com.vrchat.base", "VRChat Base SDK"},
+                {"com.vrchat.core.vpm-resolver", "VPM Resolver"},
+                {"nadena.dev.modular-avatar", "Modular Avatar — non-destructive avatar assembly framework"},
+                {"nadena.dev.ndmf", "NDMF — Non-Destructive Modular Framework (build pipeline)"},
+                {"com.anatawa12.avatar-optimizer", "AAO: Avatar Optimizer — Trace & Optimize, mesh merging"},
+                {"com.github.d4rkc0d3r.d4rkAvatarOptimizer", "d4rkAvatarOptimizer — cross-shader material merging"},
+                {"jp.lilxyzw.liltoon", "lilToon — keyword-efficient toon shader"},
+                {"com.poiyomi.toon", "Poiyomi Toon Shader — feature-dense avatar shader"},
+                {"jp.lilxyzw.lilycalinventory", "lilycalInventory — toggle/inventory system with material optimization"},
+                {"jp.lilxyzw.avatarutils", "lilAvatarUtils — avatar inspection and batch editing"},
+                {"jp.lilxyzw.editortoolbox", "lilEditorToolbox — editor QOL extensions"},
+                {"jp.lilxyzw.ndmfmeshsimplifier", "lilNDMFMeshSimplifier — non-destructive polygon reducer"},
+                {"jp.lilxyzw.materialconverter", "lilMaterialConverter — cross-shader material conversion"},
+                {"com.vrcfury.vrcfury", "VRCFury — non-destructive avatar assembly (SPS, toggles, armature link)"},
+                {"dev.suzuryg.face-emo", "FaceEmo — facial expression creation + gesture mapping"},
+                {"com.hai-vr.combo-gesture-expressions", "ComboGestureExpressions — gesture-to-expression mapping"},
+                {"dev.hai-vr.animator-as-code", "Animator As Code — programmatic animator generation"},
+                {"com.hai-vr.blendshape-viewer", "Blendshape Viewer — visual blendshape browser"},
+                {"dev.hai-vr.denormalized-avatar-exporter", "Denormalized Avatar Exporter — VTubing export"},
+                {"dev.hai-vr.prefabulous", "Prefabulous — NDMF utility components"},
+                {"com.github.thry.editor", "ThryEditor — shader inspector + locking (powers Poiyomi UI)"},
+                {"com.llealloo.audiolink", "AudioLink — audio reactive system for shaders/Udon"},
+                {"com.pimaker.ltcgi", "LTCGI — realtime area light reflections"},
+                {"com.blackstartx.gesturemanager", "GestureManager — avatar interaction emulator"},
+                {"com.lyuma.av3emulator", "Av3Emulator — VRC Avatars 3.0 PlayableGraph emulator"},
+                {"com.rrazgriz.rats", "RATS — Animator window QOL improvements"},
+                {"com.vrlabs.hierarchyplus", "HierarchyPlus — component icons in hierarchy"},
+                {"com.franada.gogoloco", "GoGo Loco — sit/lie/fly locomotion system"},
+                {"com.kurotu.vrcquesttools", "VRCQuestTools — PC→Quest automated conversion"},
+                {"com.narazaka.avatarmenucreator", "AvatarMenuCreator for MA — wizard-style toggle/menu creation"},
+                {"dev.logilabo.virtuallens2", "VirtualLens2 — VRC photography camera (drone, DoF)"},
+                {"com.reina-sakiria.textranstool", "TexTransTool — non-destructive texture atlas/decals"},
+                {"com.autonomous.unity.mcp", "Autonomous Unity MCP — this package"},
+                {"com.onevr.vrworldtoolkit", "VRWorld Toolkit — world QA analysis"},
+                {"com.vrchat.clientsim", "ClientSim — in-editor world testing"},
+                {"com.cyanlaser.cyantrigger", "CyanTrigger — visual Udon scripting"},
+                {"com.acchosen.vr-stage-lighting", "VRSL — VR Stage Lighting (DMX, AudioLink)"},
+                {"com.c-colloid.pbreplacer", "PBReplacer — batch PhysBone setting replacement"},
+                {"com.azukimochi.light-limit-changer", "Light Limit Changer for MA — avatar brightness control"},
+            };
+
+            var packages = new JArray();
+
+            // Read manifest.json
+            var manifestPath = Path.Combine(projectRoot, "Packages", "manifest.json");
+            if (File.Exists(manifestPath))
+            {
+                try
+                {
+                    var manifestJson = JObject.Parse(File.ReadAllText(manifestPath));
+                    var deps = manifestJson["dependencies"] as JObject;
+                    if (deps != null)
+                    {
+                        foreach (var prop in deps.Properties())
+                        {
+                            if (!includeBuiltin && prop.Name.StartsWith("com.unity.modules.", StringComparison.Ordinal))
+                                continue;
+
+                            var version = prop.Value.ToString();
+                            var isGit = version.Contains("github.com") || version.Contains(".git");
+                            var isLocal = version.StartsWith("file:", StringComparison.Ordinal);
+
+                            knownPackages.TryGetValue(prop.Name, out var description);
+
+                            packages.Add(JToken.FromObject(new
+                            {
+                                name = prop.Name,
+                                version,
+                                source = isGit ? "git" : isLocal ? "local" : "registry",
+                                description = description ?? "",
+                                isVrcEcosystem = knownPackages.ContainsKey(prop.Name)
+                            }));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return Error($"Failed to parse manifest.json: {ex.Message}");
+                }
+            }
+
+            // Detect additional packages via their components in loaded assemblies
+            var detectedFrameworks = new JArray();
+            string[] frameworkTypes = {
+                "VRC.SDK3.Avatars.Components.VRCAvatarDescriptor",
+                "nadena.dev.modular_avatar.core.ModularAvatarMergeArmature",
+                "VF.Model.VRCFury",
+                "Anatawa12.AvatarOptimizer.TraceAndOptimize",
+                "lilycalInventory.Runtime.LIToggleItem",
+                "d4rkAvatarOptimizer",
+            };
+            foreach (var typeName in frameworkTypes)
+            {
+                var t = ResolveType(typeName);
+                if (t != null)
+                {
+                    detectedFrameworks.Add(JToken.FromObject(new
+                    {
+                        type = t.FullName,
+                        assembly = t.Assembly.GetName().Name
+                    }));
+                }
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                packageCount = packages.Count,
+                packages,
+                detectedFrameworks
+            }));
+        }
+
+        // ───────── list_shaders ─────────
+
+        private static AutonomousMcpToolResponse HandleListShaders(JObject args)
+        {
+            var filter = args.Value<string>("filter") ?? "";
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 100, 500));
+            var includeProperties = args.Value<bool?>("include_properties") ?? false;
+            var includeBuiltin = args.Value<bool?>("include_builtin") ?? false;
+
+            // Known VRC shader families
+            var knownShaderFamilies = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
+            {
+                {".poiyomi/", "Poiyomi Toon Shader — feature-dense, AudioLink, grabpass (Pro)"},
+                {"lilToon", "lilToon — keyword-efficient, one-click presets, fur/gem variants"},
+                {"Silent's Cel Shading", "SCSS — PBR-based cel shading, Crosstone shadows"},
+                {"Xiexe/", "XSToon — PBR toon, halftone/stippling modes"},
+                {"orels1/", "ORL Shaders — PBR/Toon hybrid, Shader Generator"},
+                {"Mochie/", "Mochie's Shaders — Water, Particle, Screenspace"},
+                {"Sunao/", "Sunao — zero shader keywords"},
+                {"WhiteFlare/", "Unlit WF — unlit shader for accessories"},
+                {"VRChat/", "VRChat SDK built-in shaders"},
+            };
+
+            var shaders = new JArray();
+            int count = 0;
+
+            // Use ShaderUtil to enumerate shaders
+            var shaderUtilType = typeof(UnityEditor.ShaderUtil);
+            var getCountMethod = shaderUtilType.GetMethod("GetShaderCount",
+                BindingFlags.NonPublic | BindingFlags.Static);
+            var getNameMethod = shaderUtilType.GetMethod("GetShaderNameByIndex",
+                BindingFlags.NonPublic | BindingFlags.Static);
+
+            if (getCountMethod != null && getNameMethod != null)
+            {
+                int totalShaders = (int)getCountMethod.Invoke(null, null);
+
+                for (int i = 0; i < totalShaders && count < limit; i++)
+                {
+                    var shaderName = (string)getNameMethod.Invoke(null, new object[] { i });
+                    if (string.IsNullOrEmpty(shaderName)) continue;
+
+                    if (!includeBuiltin && (shaderName.StartsWith("Hidden/", StringComparison.Ordinal) ||
+                        shaderName.StartsWith("Legacy Shaders/", StringComparison.Ordinal) ||
+                        shaderName.StartsWith("GUI/", StringComparison.Ordinal) ||
+                        shaderName.StartsWith("UI/", StringComparison.Ordinal)))
+                        continue;
+
+                    if (!string.IsNullOrWhiteSpace(filter) &&
+                        shaderName.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    // Identify family
+                    string family = null;
+                    string familyDescription = null;
+                    foreach (var kv in knownShaderFamilies)
+                    {
+                        if (shaderName.IndexOf(kv.Key, StringComparison.OrdinalIgnoreCase) >= 0)
+                        {
+                            family = kv.Key.TrimEnd('/');
+                            familyDescription = kv.Value;
+                            break;
+                        }
+                    }
+
+                    var entry = new JObject
+                    {
+                        ["name"] = shaderName,
+                        ["family"] = family,
+                        ["familyDescription"] = familyDescription
+                    };
+
+                    if (includeProperties)
+                    {
+                        var shader = Shader.Find(shaderName);
+                        if (shader != null)
+                        {
+                            int propCount = shader.GetPropertyCount();
+                            entry["propertyCount"] = propCount;
+
+                            var props = new JArray();
+                            for (int p = 0; p < Math.Min(propCount, 50); p++)
+                            {
+                                props.Add(JToken.FromObject(new
+                                {
+                                    name = shader.GetPropertyName(p),
+                                    type = shader.GetPropertyType(p).ToString(),
+                                    description = shader.GetPropertyDescription(p)
+                                }));
+                            }
+                            entry["properties"] = props;
+                        }
+                    }
+
+                    shaders.Add(entry);
+                    count++;
+                }
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                filter,
+                count = shaders.Count,
+                shaders
+            }));
+        }
+
+        // ───────── get_asset_info ─────────
+
+        private static AutonomousMcpToolResponse HandleGetAssetInfo(JObject args)
+        {
+            var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("assetPath") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return Error("get_asset_info requires a non-empty asset_path.");
+
+            var mainAsset = AssetDatabase.LoadMainAssetAtPath(assetPath);
+            if (mainAsset == null)
+                return Error($"No asset found at '{assetPath}'.");
+
+            var assetType = mainAsset.GetType();
+            var info = new JObject
+            {
+                ["assetPath"] = assetPath,
+                ["type"] = assetType.Name,
+                ["fullType"] = assetType.FullName,
+                ["name"] = mainAsset.name,
+                ["instanceId"] = mainAsset.GetInstanceID()
+            };
+
+            // Type-specific deep inspection
+            if (mainAsset is GameObject prefab)
+            {
+                // Prefab inspection
+                var components = new JArray();
+                foreach (var comp in prefab.GetComponentsInChildren<Component>(true))
+                {
+                    if (comp == null) { components.Add("(missing script)"); continue; }
+                    components.Add(comp.GetType().FullName);
+                }
+
+                var boneCount = prefab.GetComponentsInChildren<Transform>(true).Length;
+
+                info["isPrefab"] = true;
+                info["childCount"] = prefab.transform.childCount;
+                info["totalTransforms"] = boneCount;
+                info["componentTypes"] = new JArray(
+                    components.Select(c => c.ToString()).Distinct().OrderBy(c => c).ToArray());
+
+                // Check for VRC/MA/VRCFury components
+                var vrcComponents = new JArray();
+                foreach (var comp in prefab.GetComponentsInChildren<Component>(true))
+                {
+                    if (comp == null) continue;
+                    var typeName = comp.GetType().FullName ?? "";
+                    if (typeName.Contains("VRC") || typeName.Contains("VRCFury") ||
+                        typeName.Contains("ModularAvatar") || typeName.Contains("nadena") ||
+                        typeName.Contains("lilycal") || typeName.Contains("Anatawa12") ||
+                        typeName.Contains("PhysBone"))
+                    {
+                        vrcComponents.Add(JToken.FromObject(new
+                        {
+                            type = comp.GetType().Name,
+                            fullType = typeName,
+                            gameObject = comp.gameObject.name,
+                            path = GetFullPath(comp.transform)
+                        }));
+                    }
+                }
+                if (vrcComponents.Count > 0)
+                    info["vrcEcosystemComponents"] = vrcComponents;
+
+                // Build hierarchy tree (limited depth)
+                info["hierarchy"] = BuildHierarchyNode(prefab.transform);
+            }
+            else if (mainAsset is Material mat)
+            {
+                info["shader"] = mat.shader?.name;
+                info["renderQueue"] = mat.renderQueue;
+                info["passCount"] = mat.passCount;
+
+                // List texture properties
+                var textures = new JArray();
+                if (mat.shader != null)
+                {
+                    int propCount = mat.shader.GetPropertyCount();
+                    for (int i = 0; i < propCount; i++)
+                    {
+                        if (mat.shader.GetPropertyType(i) == UnityEngine.Rendering.ShaderPropertyType.Texture)
+                        {
+                            var propName = mat.shader.GetPropertyName(i);
+                            var tex = mat.GetTexture(propName);
+                            textures.Add(JToken.FromObject(new
+                            {
+                                property = propName,
+                                texture = tex?.name,
+                                width = (tex is Texture2D t2d) ? (int?)t2d.width : null,
+                                height = (tex is Texture2D t2dh) ? (int?)t2dh.height : null
+                            }));
+                        }
+                    }
+                }
+                info["textures"] = textures;
+            }
+            else if (mainAsset is Texture2D tex2d)
+            {
+                info["width"] = tex2d.width;
+                info["height"] = tex2d.height;
+                info["format"] = tex2d.format.ToString();
+                info["mipmapCount"] = tex2d.mipmapCount;
+                info["isReadable"] = tex2d.isReadable;
+
+                var importer = AssetImporter.GetAtPath(assetPath) as TextureImporter;
+                if (importer != null)
+                {
+                    info["maxTextureSize"] = importer.maxTextureSize;
+                    info["textureCompression"] = importer.textureCompression.ToString();
+                    info["sRGB"] = importer.sRGBTexture;
+                    info["alphaSource"] = importer.alphaSource.ToString();
+                }
+            }
+            else if (mainAsset is RuntimeAnimatorController rac)
+            {
+                var controller = rac as UnityEditor.Animations.AnimatorController;
+                if (controller != null)
+                {
+                    info["layerCount"] = controller.layers.Length;
+                    info["parameterCount"] = controller.parameters.Length;
+
+                    var layers = new JArray();
+                    foreach (var layer in controller.layers)
+                    {
+                        layers.Add(JToken.FromObject(new
+                        {
+                            name = layer.name,
+                            stateCount = layer.stateMachine.states.Length,
+                            defaultWeight = layer.defaultWeight
+                        }));
+                    }
+                    info["layers"] = layers;
+
+                    var parameters = new JArray();
+                    foreach (var param in controller.parameters)
+                    {
+                        parameters.Add(JToken.FromObject(new
+                        {
+                            name = param.name,
+                            type = param.type.ToString()
+                        }));
+                    }
+                    info["parameters"] = parameters;
+                }
+            }
+            else if (mainAsset is AnimationClip clip)
+            {
+                info["length"] = clip.length;
+                info["frameRate"] = clip.frameRate;
+                info["isLooping"] = clip.isLooping;
+                info["isHumanMotion"] = clip.humanMotion;
+
+                var bindings = AnimationUtility.GetCurveBindings(clip);
+                info["curveCount"] = bindings.Length;
+                var bindingList = new JArray();
+                foreach (var binding in bindings.Take(50))
+                {
+                    bindingList.Add(JToken.FromObject(new
+                    {
+                        path = binding.path,
+                        propertyName = binding.propertyName,
+                        type = binding.type.Name
+                    }));
+                }
+                info["bindings"] = bindingList;
+            }
+
+            return Success(info);
+        }
+
+        // ───────── scan_armature ─────────
+
+        private static AutonomousMcpToolResponse HandleScanArmature(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("scan_armature requires a valid target by instanceId or name.");
+
+            // Find the Armature root
+            Transform armatureRoot = null;
+            foreach (Transform child in target.transform)
+            {
+                var nameLower = child.name.ToLowerInvariant();
+                if (nameLower == "armature" || nameLower.Contains("armature") ||
+                    nameLower == "skeleton" || nameLower.Contains("root"))
+                {
+                    armatureRoot = child;
+                    break;
+                }
+            }
+
+            if (armatureRoot == null)
+            {
+                // Try first child with children as armature
+                foreach (Transform child in target.transform)
+                {
+                    if (child.childCount > 0 && child.GetComponent<SkinnedMeshRenderer>() == null)
+                    {
+                        armatureRoot = child;
+                        break;
+                    }
+                }
+            }
+
+            if (armatureRoot == null)
+                return Error($"No armature root found on '{target.name}'. Expected child named 'Armature' or similar.");
+
+            // Traverse bone hierarchy
+            var allBones = armatureRoot.GetComponentsInChildren<Transform>(true);
+            int boneCount = allBones.Length;
+            int maxDepth = 0;
+
+            var boneTree = BuildBoneTree(armatureRoot, 0, ref maxDepth);
+
+            // Check for humanoid rig mapping
+            var animator = target.GetComponent<Animator>();
+            JToken humanoidMapping = null;
+            bool isHumanoid = false;
+
+            if (animator != null && animator.avatar != null && animator.avatar.isHuman)
+            {
+                isHumanoid = true;
+                var mappings = new JObject();
+                foreach (HumanBodyBones bone in Enum.GetValues(typeof(HumanBodyBones)))
+                {
+                    if (bone == HumanBodyBones.LastBone) continue;
+                    var boneTransform = animator.GetBoneTransform(bone);
+                    if (boneTransform != null)
+                    {
+                        mappings[bone.ToString()] = boneTransform.name;
+                    }
+                }
+                humanoidMapping = mappings;
+            }
+
+            // Find PhysBone chains
+            var physBoneChains = new JArray();
+            var physBoneType = ResolveType("VRC.SDK3.Dynamics.PhysBone.Components.VRCPhysBone");
+            if (physBoneType != null)
+            {
+                var physBones = target.GetComponentsInChildren(physBoneType, true);
+                foreach (var pb in physBones)
+                {
+                    var so = new SerializedObject(pb);
+                    var rootTransformProp = so.FindProperty("rootTransform");
+                    Transform pbRoot = rootTransformProp?.objectReferenceValue as Transform ?? pb.transform;
+                    int chainLength = pbRoot.GetComponentsInChildren<Transform>(true).Length;
+
+                    physBoneChains.Add(JToken.FromObject(new
+                    {
+                        gameObject = pb.gameObject.name,
+                        rootBone = pbRoot.name,
+                        path = GetFullPath(pbRoot),
+                        chainBoneCount = chainLength
+                    }));
+                    so.Dispose();
+                }
+            }
+
+            // Find SkinnedMeshRenderers and their bone references
+            var meshes = target.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            var meshInfo = new JArray();
+            foreach (var smr in meshes)
+            {
+                meshInfo.Add(JToken.FromObject(new
+                {
+                    name = smr.name,
+                    path = GetFullPath(smr.transform),
+                    boneCount = smr.bones?.Length ?? 0,
+                    vertexCount = smr.sharedMesh?.vertexCount ?? 0,
+                    blendShapeCount = smr.sharedMesh?.blendShapeCount ?? 0,
+                    materialCount = smr.sharedMaterials?.Length ?? 0,
+                    rootBone = smr.rootBone?.name
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                gameObject = target.name,
+                armatureRoot = armatureRoot.name,
+                boneCount,
+                maxDepth,
+                isHumanoid,
+                humanoidMapping,
+                physBoneChainCount = physBoneChains.Count,
+                physBoneChains,
+                skinnedMeshCount = meshInfo.Count,
+                skinnedMeshes = meshInfo,
+                boneTree
+            }));
+        }
+
+        private static JToken BuildBoneTree(Transform bone, int depth, ref int maxDepth)
+        {
+            if (depth > maxDepth) maxDepth = depth;
+
+            var children = new JArray();
+            foreach (Transform child in bone)
+            {
+                children.Add(BuildBoneTree(child, depth + 1, ref maxDepth));
+            }
+
+            return JToken.FromObject(new
+            {
+                name = bone.name,
+                depth,
+                childCount = bone.childCount,
+                children
+            });
+        }
+
+        // ───────── scan_avatar ─────────
+
+        private static AutonomousMcpToolResponse HandleScanAvatar(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("scan_avatar requires a valid target by instanceId or name.");
+
+            var result = new JObject
+            {
+                ["gameObject"] = target.name,
+                ["instanceId"] = target.GetInstanceID()
+            };
+
+            // Detect VRC Avatar Descriptor
+            var descriptorType = ResolveType("VRC.SDK3.Avatars.Components.VRCAvatarDescriptor");
+            Component descriptor = null;
+            if (descriptorType != null)
+            {
+                descriptor = target.GetComponent(descriptorType);
+                if (descriptor != null)
+                {
+                    var so = new SerializedObject(descriptor);
+
+                    // Basic descriptor info
+                    result["hasAvatarDescriptor"] = true;
+
+                    // Lip sync
+                    var lipSyncProp = so.FindProperty("lipSync");
+                    if (lipSyncProp != null)
+                        result["lipSyncType"] = lipSyncProp.enumNames.Length > lipSyncProp.enumValueIndex && lipSyncProp.enumValueIndex >= 0
+                            ? lipSyncProp.enumNames[lipSyncProp.enumValueIndex] : lipSyncProp.enumValueIndex.ToString();
+
+                    var lipSyncMeshProp = so.FindProperty("VisemeSkinnedMesh");
+                    if (lipSyncMeshProp?.objectReferenceValue != null)
+                        result["visemeMesh"] = lipSyncMeshProp.objectReferenceValue.name;
+
+                    // View position
+                    var viewPosProp = so.FindProperty("ViewPosition");
+                    if (viewPosProp != null)
+                        result["viewPosition"] = new JObject
+                        {
+                            ["x"] = viewPosProp.vector3Value.x,
+                            ["y"] = viewPosProp.vector3Value.y,
+                            ["z"] = viewPosProp.vector3Value.z
+                        };
+
+                    // Expression parameters
+                    var exprParamsProp = so.FindProperty("expressionParameters");
+                    if (exprParamsProp?.objectReferenceValue != null)
+                    {
+                        var paramAsset = exprParamsProp.objectReferenceValue;
+                        var paramSO = new SerializedObject(paramAsset);
+                        var paramsList = paramSO.FindProperty("parameters");
+                        if (paramsList != null && paramsList.isArray)
+                        {
+                            int paramCount = paramsList.arraySize;
+                            int totalCost = 0;
+                            var paramEntries = new JArray();
+                            for (int i = 0; i < paramCount; i++)
+                            {
+                                var elem = paramsList.GetArrayElementAtIndex(i);
+                                var paramName = elem.FindPropertyRelative("name")?.stringValue ?? "";
+                                var paramType = elem.FindPropertyRelative("valueType");
+                                int cost = 0;
+                                string typeName = "Unknown";
+                                if (paramType != null)
+                                {
+                                    // VRC parameter types: 0=Int(8), 1=Float(8), 2=Bool(1)
+                                    switch (paramType.intValue)
+                                    {
+                                        case 0: cost = 8; typeName = "Int"; break;
+                                        case 1: cost = 8; typeName = "Float"; break;
+                                        case 2: cost = 1; typeName = "Bool"; break;
+                                    }
+                                }
+                                totalCost += cost;
+                                if (!string.IsNullOrEmpty(paramName))
+                                {
+                                    paramEntries.Add(JToken.FromObject(new
+                                    {
+                                        name = paramName,
+                                        type = typeName,
+                                        cost
+                                    }));
+                                }
+                            }
+                            result["expressionParameterCount"] = paramCount;
+                            result["expressionParameterCost"] = totalCost;
+                            result["expressionParameterBudget"] = 256;
+                            result["expressionParameterRemaining"] = 256 - totalCost;
+                            result["expressionParameters"] = paramEntries;
+                        }
+                        paramSO.Dispose();
+                    }
+
+                    // Expression menus
+                    var exprMenuProp = so.FindProperty("expressionsMenu");
+                    if (exprMenuProp?.objectReferenceValue != null)
+                    {
+                        result["hasExpressionsMenu"] = true;
+                        result["expressionsMenuAsset"] = AssetDatabase.GetAssetPath(exprMenuProp.objectReferenceValue);
+                    }
+
+                    so.Dispose();
+                }
+                else
+                {
+                    result["hasAvatarDescriptor"] = false;
+                    result["warning"] = "No VRCAvatarDescriptor found. This is required for VRChat avatars.";
+                }
+            }
+            else
+            {
+                result["hasAvatarDescriptor"] = false;
+                result["note"] = "VRChat SDK not detected in project.";
+            }
+
+            // Detect PhysBones
+            var physBoneType = ResolveType("VRC.SDK3.Dynamics.PhysBone.Components.VRCPhysBone");
+            if (physBoneType != null)
+            {
+                var physBones = target.GetComponentsInChildren(physBoneType, true);
+                result["physBoneCount"] = physBones.Length;
+
+                var pbColliderType = ResolveType("VRC.SDK3.Dynamics.PhysBone.Components.VRCPhysBoneCollider");
+                if (pbColliderType != null)
+                {
+                    var colliders = target.GetComponentsInChildren(pbColliderType, true);
+                    result["physBoneColliderCount"] = colliders.Length;
+                }
+            }
+
+            // Detect Contact Receivers/Senders
+            var contactReceiverType = ResolveType("VRC.SDK3.Dynamics.Contact.Components.VRCContactReceiver");
+            var contactSenderType = ResolveType("VRC.SDK3.Dynamics.Contact.Components.VRCContactSender");
+            if (contactReceiverType != null)
+                result["contactReceiverCount"] = target.GetComponentsInChildren(contactReceiverType, true).Length;
+            if (contactSenderType != null)
+                result["contactSenderCount"] = target.GetComponentsInChildren(contactSenderType, true).Length;
+
+            // Detect ecosystem frameworks
+            var installedFrameworks = new JArray();
+
+            // Modular Avatar
+            var maType = ResolveType("nadena.dev.modular_avatar.core.AvatarTagComponent");
+            if (maType != null)
+            {
+                var maComponents = target.GetComponentsInChildren(maType, true);
+                if (maComponents.Length > 0)
+                {
+                    var maTypes = new JArray();
+                    foreach (var c in maComponents)
+                    {
+                        var typeName = c.GetType().Name;
+                        if (!maTypes.Any(t => t.ToString() == typeName))
+                            maTypes.Add(typeName);
+                    }
+                    installedFrameworks.Add(JToken.FromObject(new
+                    {
+                        framework = "Modular Avatar",
+                        componentCount = maComponents.Length,
+                        componentTypes = maTypes
+                    }));
+                }
+            }
+
+            // VRCFury
+            var vrcfType = ResolveType("VF.Model.VRCFury");
+            if (vrcfType != null)
+            {
+                var vrcfComponents = target.GetComponentsInChildren(vrcfType, true);
+                if (vrcfComponents.Length > 0)
+                {
+                    installedFrameworks.Add(JToken.FromObject(new
+                    {
+                        framework = "VRCFury",
+                        componentCount = vrcfComponents.Length
+                    }));
+                }
+            }
+
+            // AAO (Avatar Optimizer)
+            var aaoType = ResolveType("Anatawa12.AvatarOptimizer.TraceAndOptimize");
+            if (aaoType != null)
+            {
+                var aaoComponents = target.GetComponentsInChildren(aaoType, true);
+                installedFrameworks.Add(JToken.FromObject(new
+                {
+                    framework = "AAO: Avatar Optimizer",
+                    hasTraceAndOptimize = aaoComponents.Length > 0
+                }));
+            }
+
+            // lilycalInventory
+            var liType = ResolveType("lilycalInventory.Runtime.LIToggleItem");
+            if (liType == null) liType = ResolveType("LIToggleItem");
+            if (liType != null)
+            {
+                var liComponents = target.GetComponentsInChildren(liType, true);
+                if (liComponents.Length > 0)
+                {
+                    installedFrameworks.Add(JToken.FromObject(new
+                    {
+                        framework = "lilycalInventory",
+                        toggleCount = liComponents.Length
+                    }));
+                }
+            }
+
+            result["installedFrameworks"] = installedFrameworks;
+
+            // Mesh stats
+            var skinnedMeshes = target.GetComponentsInChildren<SkinnedMeshRenderer>(true);
+            var meshRenderers = target.GetComponentsInChildren<MeshRenderer>(true);
+            int totalPolygons = 0;
+            int totalMaterials = 0;
+            int totalBlendShapes = 0;
+
+            foreach (var smr in skinnedMeshes)
+            {
+                if (smr.sharedMesh != null)
+                {
+                    totalPolygons += smr.sharedMesh.triangles.Length / 3;
+                    totalBlendShapes += smr.sharedMesh.blendShapeCount;
+                }
+                totalMaterials += smr.sharedMaterials?.Length ?? 0;
+            }
+            foreach (var mr in meshRenderers)
+            {
+                var mf = mr.GetComponent<MeshFilter>();
+                if (mf?.sharedMesh != null)
+                    totalPolygons += mf.sharedMesh.triangles.Length / 3;
+                totalMaterials += mr.sharedMaterials?.Length ?? 0;
+            }
+
+            result["meshStats"] = JToken.FromObject(new
+            {
+                skinnedMeshRendererCount = skinnedMeshes.Length,
+                meshRendererCount = meshRenderers.Length,
+                totalPolygons,
+                totalMaterials,
+                totalBlendShapes
+            });
+
+            // Bone count
+            var allTransforms = target.GetComponentsInChildren<Transform>(true);
+            result["totalBoneCount"] = allTransforms.Length;
+
+            // Shader usage
+            var shaderUsage = new Dictionary<string, int>();
+            foreach (var smr in skinnedMeshes)
+            {
+                foreach (var mat in smr.sharedMaterials)
+                {
+                    if (mat?.shader != null)
+                    {
+                        var shaderName = mat.shader.name;
+                        shaderUsage[shaderName] = shaderUsage.ContainsKey(shaderName) ? shaderUsage[shaderName] + 1 : 1;
+                    }
+                }
+            }
+            var shaderList = new JArray();
+            foreach (var kv in shaderUsage.OrderByDescending(kv => kv.Value))
+            {
+                shaderList.Add(JToken.FromObject(new { shader = kv.Key, materialCount = kv.Value }));
+            }
+            result["shaderUsage"] = shaderList;
+
+            return Success(result);
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)

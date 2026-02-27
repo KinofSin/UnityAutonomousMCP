@@ -4,6 +4,7 @@ import { z } from "zod";
 import { runAutonomousGoal } from "./orchestrator.js";
 import { createUnityBridgeFromEnv } from "./unityBridge.js";
 import { TOOL_CAPABILITIES } from "./capabilityCatalog.js";
+import { queryKnowledgeBase } from "./vrcKnowledgeBase.js";
 
 const bridge = createUnityBridgeFromEnv();
 
@@ -363,6 +364,81 @@ export async function startMcpServer(): Promise<void> {
       value: z.string().optional().describe("New value for set_player_setting"),
     },
     async (input) => callUnity("manage_project_settings", input)
+  );
+
+  // ── get_installed_packages ──
+
+  server.tool(
+    "get_installed_packages",
+    "List all installed Unity packages with VRC ecosystem identification. Flags 40+ known VRChat packages (MA, VRCFury, AAO, Poiyomi, lilToon, etc.) with descriptions. Detects loaded framework assemblies.",
+    {
+      include_builtin: z.boolean().optional().describe("Include com.unity.modules.* packages (default: false)"),
+    },
+    async (input) => callUnity("get_installed_packages", input)
+  );
+
+  // ── list_shaders ──
+
+  server.tool(
+    "list_shaders",
+    "Enumerate all shaders in the project with VRC ecosystem family detection (Poiyomi, lilToon, SCSS, ORL, etc.). Filter and inspect shader properties.",
+    {
+      filter: z.string().optional().describe("Filter shaders by name substring"),
+      limit: z.number().int().min(1).max(500).optional().describe("Max results (default: 100)"),
+      include_properties: z.boolean().optional().describe("Include shader property list (default: false)"),
+      include_builtin: z.boolean().optional().describe("Include Hidden/Legacy/GUI/UI shaders (default: false)"),
+    },
+    async (input) => callUnity("list_shaders", input)
+  );
+
+  // ── get_asset_info ──
+
+  server.tool(
+    "get_asset_info",
+    "Deep inspect any Unity asset by path. Returns type-specific details: prefab hierarchy + VRC components, material shader + textures, texture dimensions + compression, AnimatorController layers + parameters, AnimationClip curves + bindings.",
+    {
+      asset_path: z.string().min(1).describe("Asset path (e.g. 'Assets/Prefabs/MyAvatar.prefab', 'Assets/Materials/Body.mat')"),
+    },
+    async (input) => callUnity("get_asset_info", input)
+  );
+
+  // ── scan_armature ──
+
+  server.tool(
+    "scan_armature",
+    "VRChat avatar armature analysis: full bone tree, humanoid rig mapping (all HumanBodyBones), PhysBone chains, SkinnedMeshRenderer stats. Essential before attaching accessories or clothing.",
+    {
+      ...zInstanceIdOrName,
+    },
+    async (input) => callUnity("scan_armature", input)
+  );
+
+  // ── scan_avatar ──
+
+  server.tool(
+    "scan_avatar",
+    "Comprehensive VRChat avatar scan: VRCAvatarDescriptor (lip sync, view position, expression parameters with cost/budget/remaining), PhysBones, Contacts, installed frameworks (MA, VRCFury, AAO, lilycalInventory), mesh stats (polygons, materials, blendshapes), shader usage, bone count.",
+    {
+      ...zInstanceIdOrName,
+    },
+    async (input) => callUnity("scan_avatar", input)
+  );
+
+  // ── get_vrc_knowledge ──
+
+  server.tool(
+    "get_vrc_knowledge",
+    "Query the VRChat ecosystem knowledge base covering 150+ tools across 21 categories (shaders, optimization, toggles, expressions, physics, assembly, Quest, VRM, lighting, etc.). Returns conventions, best practices, tool descriptions, and best-pick recommendations.",
+    {
+      category: z.string().optional().describe("Category ID to fetch (e.g. 'shaders', 'optimization', 'assembly', 'toggles', 'expressions', 'physics', 'quest', 'avatar_conventions')"),
+      tool_name: z.string().optional().describe("Search for a specific tool by name (e.g. 'Poiyomi', 'Modular Avatar', 'AAO')"),
+      search: z.string().optional().describe("Free-text search across all tools, descriptions, and conventions"),
+      list_categories: z.boolean().optional().describe("List all available categories (default: false)"),
+    },
+    async (input) => {
+      const result = queryKnowledgeBase(input);
+      return toTextResult(result);
+    }
   );
 
   // ── validate_script ──
