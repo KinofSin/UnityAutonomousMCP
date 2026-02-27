@@ -197,6 +197,13 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     notes: "Query the VRChat ecosystem knowledge base covering 150+ tools across 21 categories. Search by category, tool name, or free text. Returns conventions, best practices, tool descriptions, and best-pick recommendations for shaders, optimization, toggles, expressions, physics, and more."
   },
   {
+    tool: "get_install_guide",
+    category: "knowledge",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Step-by-step install, setup, and test instructions for 60+ VRChat Unity tools. VPM repo URLs, global prerequisites (Unity Hub, Unity 2022.3.22f1, VCC, ALCOM), common errors & fixes. Query by tool name, section, or search."
+  },
+  {
     tool: "validate_script",
     category: "script",
     destructive: false,

@@ -5,6 +5,7 @@ import { runAutonomousGoal } from "./orchestrator.js";
 import { createUnityBridgeFromEnv } from "./unityBridge.js";
 import { TOOL_CAPABILITIES } from "./capabilityCatalog.js";
 import { queryKnowledgeBase } from "./vrcKnowledgeBase.js";
+import { queryInstallGuide } from "./vrcInstallGuide.js";
 
 const bridge = createUnityBridgeFromEnv();
 
@@ -437,6 +438,26 @@ export async function startMcpServer(): Promise<void> {
     },
     async (input) => {
       const result = queryKnowledgeBase(input);
+      return toTextResult(result);
+    }
+  );
+
+  // ── get_install_guide ──
+
+  server.tool(
+    "get_install_guide",
+    "Step-by-step installation, setup, and testing instructions for 60+ VRChat Unity tools. Includes VPM repo URLs, prerequisites, common errors & fixes. Sourced from a comprehensive 3300-line install guide.",
+    {
+      tool_name: z.string().optional().describe("Get install/setup/test steps for a specific tool (e.g. 'Modular Avatar', 'Poiyomi', 'AAO', 'FaceEmo', 'GoGo Loco')"),
+      section: z.string().optional().describe("Get all tools in a section (e.g. 'Shaders', 'Toggle Systems', 'Facial Expressions', 'Physics', 'Emulators')"),
+      search: z.string().optional().describe("Free-text search across all install/setup instructions"),
+      list_sections: z.boolean().optional().describe("List all sections with their tools"),
+      get_prerequisites: z.boolean().optional().describe("Get global prerequisites (Unity Hub, Unity 2022.3.22f1, VCC, ALCOM, project creation)"),
+      get_repos: z.boolean().optional().describe("Get all 30 VPM repository URLs"),
+      get_errors: z.boolean().optional().describe("Get common errors & fixes"),
+    },
+    async (input) => {
+      const result = queryInstallGuide(input);
       return toTextResult(result);
     }
   );
