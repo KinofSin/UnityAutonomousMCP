@@ -230,6 +230,27 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     destructive: false,
     supportsBatch: false,
     notes: "Read logs to drive autonomous retry and debugging loops."
+  },
+  {
+    tool: "manage_scriptable_object",
+    category: "assets",
+    destructive: true,
+    supportsBatch: true,
+    notes: "Create, find, inspect, and edit ScriptableObject assets. Actions: find (search by filter), get_properties (read all serialized fields via SerializedObject), set_property (write with Undo support), create (new SO asset from type name), list_fields (inspect type schema via reflection). Useful for VRC expression parameters, tool configs, etc."
+  },
+  {
+    tool: "manage_texture",
+    category: "assets",
+    destructive: true,
+    supportsBatch: true,
+    notes: "Inspect and modify texture import settings: max size, compression (crunch), sRGB, mipmaps, filter mode, aniso, texture type. Includes Android override info. find_textures searches project. Essential for Quest optimization (downsize textures, enable crunch)."
+  },
+  {
+    tool: "refresh_unity",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Force AssetDatabase.Refresh() — reimport changed assets, recompile scripts. Use after external file edits. Optional import_all for full force reimport."
   }
 ];
 

@@ -462,6 +462,60 @@ export async function startMcpServer(): Promise<void> {
     }
   );
 
+  // ── manage_scriptable_object ──
+
+  server.tool(
+    "manage_scriptable_object",
+    "Create, find, inspect, and edit ScriptableObject assets. Actions: find (search project), get_properties (read all serialized fields), set_property (write a field), create (new SO asset), list_fields (inspect type schema).",
+    {
+      action: z.enum(["find", "get_properties", "set_property", "create", "list_fields"])
+        .describe("ScriptableObject action"),
+      asset_path: z.string().optional().describe("Asset path for get_properties/set_property (e.g. 'Assets/Data/MyConfig.asset')"),
+      instanceId: z.number().int().optional().describe("Instance ID alternative to asset_path"),
+      filter: z.string().optional().describe("Search filter for find (e.g. 'MyConfig' or 't:ScriptableObject MyConfig')"),
+      type: z.string().optional().describe("Type name for create/list_fields (e.g. 'VRCExpressionParameters', 'MyConfigSO')"),
+      path: z.string().optional().describe("Save path for create (e.g. 'Assets/Data/NewConfig.asset')"),
+      property: z.string().optional().describe("Property name for set_property"),
+      value: z.unknown().optional().describe("Value for set_property (type-matched: int, float, bool, string, {r,g,b,a}, etc.)"),
+    },
+    async (input) => callUnity("manage_scriptable_object", input)
+  );
+
+  // ── manage_texture ──
+
+  server.tool(
+    "manage_texture",
+    "Inspect and modify texture import settings. Actions: get_import_settings (full import config + Android overrides), set_import_settings (max size, compression, crunch, sRGB, mipmaps, filter, etc.), get_info (runtime texture dimensions/format), find_textures (search project).",
+    {
+      action: z.enum(["get_import_settings", "set_import_settings", "get_info", "find_textures"])
+        .describe("Texture action"),
+      asset_path: z.string().optional().describe("Texture asset path (e.g. 'Assets/Textures/Body_diffuse.png')"),
+      filter: z.string().optional().describe("Search filter for find_textures"),
+      max_texture_size: z.number().int().optional().describe("Max texture size (32-8192, e.g. 2048, 1024, 512)"),
+      texture_compression: z.string().optional().describe("Compression: Uncompressed, Compressed, CompressedHQ, CompressedLQ"),
+      crunch_compression: z.boolean().optional().describe("Enable crunch compression (smaller file size)"),
+      compression_quality: z.number().int().min(0).max(100).optional().describe("Crunch compression quality 0-100"),
+      sRGB: z.boolean().optional().describe("sRGB color space (true for albedo/diffuse, false for normals/masks)"),
+      is_readable: z.boolean().optional().describe("CPU-readable (needed for scripts, costs memory)"),
+      mipmap_enabled: z.boolean().optional().describe("Generate mipmaps"),
+      filter_mode: z.string().optional().describe("Filter mode: Point, Bilinear, Trilinear"),
+      aniso_level: z.number().int().min(0).max(16).optional().describe("Anisotropic filtering level"),
+      texture_type: z.string().optional().describe("Texture type: Default, NormalMap, Sprite, Cursor, Cookie, Lightmap, SingleChannel"),
+    },
+    async (input) => callUnity("manage_texture", input)
+  );
+
+  // ── refresh_unity ──
+
+  server.tool(
+    "refresh_unity",
+    "Force Unity to refresh AssetDatabase — reimport changed assets, recompile scripts. Use after external file changes.",
+    {
+      import_all: z.boolean().optional().describe("Force reimport all assets (slower, default: false)"),
+    },
+    async (input) => callUnity("refresh_unity", input)
+  );
+
   // ── validate_script ──
 
   server.tool(

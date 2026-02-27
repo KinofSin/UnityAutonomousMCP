@@ -92,6 +92,12 @@ namespace AutonomousMcp.Editor
                         return HandleScanArmature(args);
                     case "scan_avatar":
                         return HandleScanAvatar(args);
+                    case "manage_scriptable_object":
+                        return HandleManageScriptableObject(args);
+                    case "manage_texture":
+                        return HandleManageTexture(args);
+                    case "refresh_unity":
+                        return HandleRefreshUnity(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -172,6 +178,9 @@ namespace AutonomousMcp.Editor
                     "validate_script",
                     "run_tests",
                     "get_test_job",
+                    "manage_scriptable_object",
+                    "manage_texture",
+                    "refresh_unity",
                     "batch_execute"
                 },
                 supportedActions = new
@@ -188,7 +197,9 @@ namespace AutonomousMcp.Editor
                     manage_prefab = new[] { "get_status", "open", "apply_overrides", "revert_overrides", "unpack" },
                     manage_selection = new[] { "get", "set", "clear", "focus" },
                     manage_layer_tag = new[] { "get", "set_layer", "set_tag", "list_layers", "list_tags", "list_sorting_layers" },
-                    manage_project_settings = new[] { "get_player_settings", "set_player_setting", "get_quality_settings", "get_physics_settings", "get_time_settings" }
+                    manage_project_settings = new[] { "get_player_settings", "set_player_setting", "get_quality_settings", "get_physics_settings", "get_time_settings" },
+                    manage_scriptable_object = new[] { "find", "get_properties", "set_property", "create", "list_fields" },
+                    manage_texture = new[] { "get_import_settings", "set_import_settings", "get_info", "find_textures" }
                 }
             }));
         }
@@ -3791,6 +3802,434 @@ public static class __McpEval
                 job = job.Snapshot()
             }));
         }
+
+        // ───────── manage_scriptable_object ─────────
+
+        private static AutonomousMcpToolResponse HandleManageScriptableObject(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "find":
+                    return HandleFindScriptableObjects(args);
+                case "get_properties":
+                    return HandleGetScriptableObjectProperties(args);
+                case "set_property":
+                    return HandleSetScriptableObjectProperty(args);
+                case "create":
+                    return HandleCreateScriptableObject(args);
+                case "list_fields":
+                    return HandleListScriptableObjectFields(args);
+                default:
+                    return Error($"Unsupported manage_scriptable_object action '{action}'.");
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleFindScriptableObjects(JObject args)
+        {
+            var filter = args.Value<string>("filter") ?? args.Value<string>("search") ?? "t:ScriptableObject";
+            if (!filter.Contains("t:")) filter = $"t:ScriptableObject {filter}";
+
+            var guids = AssetDatabase.FindAssets(filter);
+            var results = new JArray();
+
+            foreach (var guid in guids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var asset = AssetDatabase.LoadAssetAtPath<ScriptableObject>(path);
+                if (asset == null) continue;
+
+                results.Add(JToken.FromObject(new
+                {
+                    name = asset.name,
+                    type = asset.GetType().Name,
+                    fullType = asset.GetType().FullName,
+                    path,
+                    instanceId = asset.GetInstanceID()
+                }));
+
+                if (results.Count >= 100) break;
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "find",
+                filter,
+                count = results.Count,
+                assets = results
+            }));
+        }
+
+        private static ScriptableObject ResolveScriptableObject(JObject args)
+        {
+            var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("path") ?? string.Empty;
+            if (!string.IsNullOrWhiteSpace(assetPath))
+                return AssetDatabase.LoadAssetAtPath<ScriptableObject>(assetPath);
+
+            var instanceId = args.Value<int?>("instanceId") ?? args.Value<int?>("instance_id");
+            if (instanceId.HasValue)
+                return EditorUtility.InstanceIDToObject(instanceId.Value) as ScriptableObject;
+
+            return null;
+        }
+
+        private static AutonomousMcpToolResponse HandleGetScriptableObjectProperties(JObject args)
+        {
+            var so = ResolveScriptableObject(args);
+            if (so == null)
+                return Error("get_properties requires a valid ScriptableObject (asset_path or instanceId).");
+
+            var serialized = new SerializedObject(so);
+            var propList = new JArray();
+            var iterator = serialized.GetIterator();
+            bool enter = true;
+
+            while (iterator.NextVisible(enter))
+            {
+                enter = false;
+                if (iterator.name == "m_Script") continue;
+
+                propList.Add(JToken.FromObject(new
+                {
+                    name = iterator.name,
+                    displayName = iterator.displayName,
+                    type = iterator.propertyType.ToString(),
+                    value = ReadSerializedPropertyValue(iterator),
+                    depth = iterator.depth
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_properties",
+                name = so.name,
+                type = so.GetType().Name,
+                path = AssetDatabase.GetAssetPath(so),
+                count = propList.Count,
+                properties = propList
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetScriptableObjectProperty(JObject args)
+        {
+            var so = ResolveScriptableObject(args);
+            if (so == null)
+                return Error("set_property requires a valid ScriptableObject (asset_path or instanceId).");
+
+            var propName = args.Value<string>("property") ?? args.Value<string>("property_name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(propName))
+                return Error("set_property requires a non-empty property name.");
+
+            var serialized = new SerializedObject(so);
+            var prop = serialized.FindProperty(propName);
+            if (prop == null)
+                return Error($"Property '{propName}' not found on ScriptableObject '{so.name}'.");
+
+            var valueToken = args["value"];
+            if (valueToken == null)
+                return Error("set_property requires a 'value' parameter.");
+
+            Undo.RecordObject(so, "MCP: Set ScriptableObject Property");
+
+            bool written = WriteSerializedPropertyValue(prop, valueToken);
+            if (!written)
+                return Error($"Could not write to property '{propName}' (type: {prop.propertyType}).");
+
+            serialized.ApplyModifiedProperties();
+            EditorUtility.SetDirty(so);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "set_property",
+                name = so.name,
+                property = propName,
+                type = prop.propertyType.ToString()
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleCreateScriptableObject(JObject args)
+        {
+            var typeName = args.Value<string>("type") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("create requires a 'type' (e.g. 'MyScriptableObject' or full 'Namespace.MyScriptableObject').");
+
+            var savePath = args.Value<string>("path") ?? args.Value<string>("asset_path") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(savePath))
+                return Error("create requires a 'path' (e.g. 'Assets/Data/MyConfig.asset').");
+
+            var type = ResolveType(typeName);
+            if (type == null || !typeof(ScriptableObject).IsAssignableFrom(type))
+                return Error($"Type '{typeName}' not found or not a ScriptableObject.");
+
+            var instance = ScriptableObject.CreateInstance(type);
+            if (instance == null)
+                return Error($"Failed to create instance of '{typeName}'.");
+
+            var directory = Path.GetDirectoryName(savePath);
+            if (!string.IsNullOrEmpty(directory) && !Directory.Exists(directory))
+                Directory.CreateDirectory(directory);
+
+            AssetDatabase.CreateAsset(instance, savePath);
+            AssetDatabase.SaveAssets();
+
+            return Success(JToken.FromObject(new
+            {
+                action = "create",
+                type = type.FullName,
+                path = savePath,
+                instanceId = instance.GetInstanceID()
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleListScriptableObjectFields(JObject args)
+        {
+            var typeName = args.Value<string>("type") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("list_fields requires a 'type' name.");
+
+            var type = ResolveType(typeName);
+            if (type == null || !typeof(ScriptableObject).IsAssignableFrom(type))
+                return Error($"Type '{typeName}' not found or not a ScriptableObject.");
+
+            var fields = type.GetFields(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)
+                .Where(f => f.IsPublic || f.GetCustomAttribute<SerializeField>() != null)
+                .ToArray();
+
+            var fieldList = new JArray();
+            foreach (var f in fields)
+            {
+                fieldList.Add(JToken.FromObject(new
+                {
+                    name = f.Name,
+                    type = f.FieldType.Name,
+                    fullType = f.FieldType.FullName,
+                    isPublic = f.IsPublic,
+                    hasSerializeField = f.GetCustomAttribute<SerializeField>() != null
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "list_fields",
+                type = type.FullName,
+                count = fieldList.Count,
+                fields = fieldList
+            }));
+        }
+
+        // ───────── manage_texture ─────────
+
+        private static AutonomousMcpToolResponse HandleManageTexture(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "get_import_settings":
+                    return HandleGetTextureImportSettings(args);
+                case "set_import_settings":
+                    return HandleSetTextureImportSettings(args);
+                case "get_info":
+                    return HandleGetTextureInfo(args);
+                case "find_textures":
+                    return HandleFindTextures(args);
+                default:
+                    return Error($"Unsupported manage_texture action '{action}'.");
+            }
+        }
+
+        private static TextureImporter ResolveTextureImporter(JObject args)
+        {
+            var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("path") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(assetPath)) return null;
+            return AssetImporter.GetAtPath(assetPath) as TextureImporter;
+        }
+
+        private static AutonomousMcpToolResponse HandleGetTextureImportSettings(JObject args)
+        {
+            var importer = ResolveTextureImporter(args);
+            if (importer == null)
+                return Error("get_import_settings requires a valid texture asset_path.");
+
+            var platformAndroid = importer.GetPlatformTextureSettings("Android");
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_import_settings",
+                path = importer.assetPath,
+                textureType = importer.textureType.ToString(),
+                textureShape = importer.textureShape.ToString(),
+                sRGBTexture = importer.sRGBTexture,
+                alphaSource = importer.alphaSource.ToString(),
+                alphaIsTransparency = importer.alphaIsTransparency,
+                maxTextureSize = importer.maxTextureSize,
+                textureCompression = importer.textureCompression.ToString(),
+                crunchedCompression = importer.crunchCompression,
+                compressionQuality = importer.compressionQuality,
+                filterMode = importer.filterMode.ToString(),
+                wrapMode = importer.wrapMode.ToString(),
+                anisoLevel = importer.anisoLevel,
+                mipmapEnabled = importer.mipmapEnabled,
+                isReadable = importer.isReadable,
+                npotScale = importer.npotScale.ToString(),
+                androidOverride = platformAndroid.overridden ? new
+                {
+                    maxSize = platformAndroid.maxTextureSize,
+                    format = platformAndroid.format.ToString(),
+                    compressionQuality = platformAndroid.compressionQuality
+                } : null
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetTextureImportSettings(JObject args)
+        {
+            var importer = ResolveTextureImporter(args);
+            if (importer == null)
+                return Error("set_import_settings requires a valid texture asset_path.");
+
+            bool changed = false;
+
+            var maxSize = args.Value<int?>("max_texture_size") ?? args.Value<int?>("maxTextureSize");
+            if (maxSize.HasValue) { importer.maxTextureSize = maxSize.Value; changed = true; }
+
+            var compression = args.Value<string>("texture_compression") ?? args.Value<string>("compression");
+            if (!string.IsNullOrEmpty(compression))
+            {
+                if (Enum.TryParse<TextureImporterCompression>(compression, true, out var comp))
+                { importer.textureCompression = comp; changed = true; }
+            }
+
+            var crunch = args.Value<bool?>("crunch_compression") ?? args.Value<bool?>("crunchedCompression");
+            if (crunch.HasValue) { importer.crunchCompression = crunch.Value; changed = true; }
+
+            var quality = args.Value<int?>("compression_quality") ?? args.Value<int?>("compressionQuality");
+            if (quality.HasValue) { importer.compressionQuality = quality.Value; changed = true; }
+
+            var srgb = args.Value<bool?>("sRGB") ?? args.Value<bool?>("srgb");
+            if (srgb.HasValue) { importer.sRGBTexture = srgb.Value; changed = true; }
+
+            var readable = args.Value<bool?>("is_readable") ?? args.Value<bool?>("isReadable");
+            if (readable.HasValue) { importer.isReadable = readable.Value; changed = true; }
+
+            var mipmap = args.Value<bool?>("mipmap_enabled") ?? args.Value<bool?>("mipmapEnabled");
+            if (mipmap.HasValue) { importer.mipmapEnabled = mipmap.Value; changed = true; }
+
+            var filterStr = args.Value<string>("filter_mode") ?? args.Value<string>("filterMode");
+            if (!string.IsNullOrEmpty(filterStr))
+            {
+                if (Enum.TryParse<FilterMode>(filterStr, true, out var fm))
+                { importer.filterMode = fm; changed = true; }
+            }
+
+            var aniso = args.Value<int?>("aniso_level") ?? args.Value<int?>("anisoLevel");
+            if (aniso.HasValue) { importer.anisoLevel = aniso.Value; changed = true; }
+
+            var texType = args.Value<string>("texture_type") ?? args.Value<string>("textureType");
+            if (!string.IsNullOrEmpty(texType))
+            {
+                if (Enum.TryParse<TextureImporterType>(texType, true, out var tt))
+                { importer.textureType = tt; changed = true; }
+            }
+
+            if (!changed)
+                return Error("No valid settings provided to change.");
+
+            importer.SaveAndReimport();
+
+            return Success(JToken.FromObject(new
+            {
+                action = "set_import_settings",
+                path = importer.assetPath,
+                settingsChanged = changed
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetTextureInfo(JObject args)
+        {
+            var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("path") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return Error("get_info requires an asset_path.");
+
+            var texture = AssetDatabase.LoadAssetAtPath<Texture>(assetPath);
+            if (texture == null)
+                return Error($"No Texture found at '{assetPath}'.");
+
+            var tex2d = texture as Texture2D;
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_info",
+                path = assetPath,
+                name = texture.name,
+                type = texture.GetType().Name,
+                width = texture.width,
+                height = texture.height,
+                filterMode = texture.filterMode.ToString(),
+                wrapMode = texture.wrapMode.ToString(),
+                anisoLevel = texture.anisoLevel,
+                format = tex2d?.format.ToString(),
+                mipmapCount = tex2d?.mipmapCount,
+                isReadable = tex2d?.isReadable,
+                instanceId = texture.GetInstanceID()
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleFindTextures(JObject args)
+        {
+            var filter = args.Value<string>("filter") ?? args.Value<string>("search") ?? "t:Texture2D";
+            if (!filter.Contains("t:")) filter = $"t:Texture2D {filter}";
+
+            var guids = AssetDatabase.FindAssets(filter);
+            var results = new JArray();
+
+            foreach (var guid in guids)
+            {
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var tex = AssetDatabase.LoadAssetAtPath<Texture>(path);
+                if (tex == null) continue;
+
+                results.Add(JToken.FromObject(new
+                {
+                    name = tex.name,
+                    path,
+                    width = tex.width,
+                    height = tex.height,
+                    type = tex.GetType().Name
+                }));
+
+                if (results.Count >= 100) break;
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "find_textures",
+                filter,
+                count = results.Count,
+                textures = results
+            }));
+        }
+
+        // ───────── refresh_unity ─────────
+
+        private static AutonomousMcpToolResponse HandleRefreshUnity(JObject args)
+        {
+            var importAll = args.Value<bool?>("import_all") ?? false;
+
+            if (importAll)
+                AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
+            else
+                AssetDatabase.Refresh();
+
+            return Success(JToken.FromObject(new
+            {
+                action = "refresh",
+                importAll,
+                isCompiling = EditorApplication.isCompiling
+            }));
+        }
+
+        // ───────── batch_execute ─────────
 
         private static AutonomousMcpToolResponse HandleBatchExecute(JObject args, int depth)
         {
