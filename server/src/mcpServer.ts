@@ -429,9 +429,9 @@ export async function startMcpServer(): Promise<void> {
 
   server.tool(
     "get_vrc_knowledge",
-    "Query the VRChat ecosystem knowledge base covering 150+ tools across 21 categories (shaders, optimization, toggles, expressions, physics, assembly, Quest, VRM, lighting, etc.). Returns conventions, best practices, tool descriptions, and best-pick recommendations.",
+    "Query the VRChat ecosystem knowledge base covering 200+ tools across 31 categories (shaders, optimization, toggles, expressions, physics, assembly, Quest, VRM, lighting, OSC protocol/libs/apps/query, face tracking, FBT stacks, SteamVR tools, haptics, desktop companions, marketplace). Returns conventions, best practices, tool descriptions, and best-pick recommendations.",
     {
-      category: z.string().optional().describe("Category ID to fetch (e.g. 'shaders', 'optimization', 'assembly', 'toggles', 'expressions', 'physics', 'quest', 'avatar_conventions')"),
+      category: z.string().optional().describe("Category ID to fetch (e.g. 'shaders', 'optimization', 'assembly', 'osc_core', 'osc_libraries', 'osc_query', 'osc_apps', 'face_tracking', 'fbt_stacks', 'steamvr_tools', 'haptics', 'desktop_companions', 'osc_marketplace', 'avatar_conventions')"),
       tool_name: z.string().optional().describe("Search for a specific tool by name (e.g. 'Poiyomi', 'Modular Avatar', 'AAO')"),
       search: z.string().optional().describe("Free-text search across all tools, descriptions, and conventions"),
       list_categories: z.boolean().optional().describe("List all available categories (default: false)"),
