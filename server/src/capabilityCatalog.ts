@@ -251,6 +251,34 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     destructive: false,
     supportsBatch: true,
     notes: "Force AssetDatabase.Refresh() — reimport changed assets, recompile scripts. Use after external file edits. Optional import_all for full force reimport."
+  },
+  {
+    tool: "list_menu_items",
+    category: "editor",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Scan all loaded assemblies for [MenuItem] attributes and return their paths. Discovers installed package menu items (VRCFury, Modular Avatar, Poiyomi, etc.) and user-defined ones. Filter by substring. Use with execute_menu_item to invoke discovered commands."
+  },
+  {
+    tool: "inspect_type",
+    category: "knowledge",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Reflect on any C# type: methods (with full parameter signatures, return types), properties (read/write), fields (serialized). Works on all loaded types: Unity API, VRChat SDK, installed packages (VRCFury, MA, AAO, lilToon), user scripts. Supports enums (returns all values). Filter members by name. include_inherited to see base class members."
+  },
+  {
+    tool: "list_custom_tools",
+    category: "knowledge",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Discover user-registered custom MCP tools. Scans project assemblies for static methods with [McpTool(name, description)] attribute. Cacheable with rescan option. Returns tool name, description, declaring type, assembly."
+  },
+  {
+    tool: "execute_custom_tool",
+    category: "runtime",
+    destructive: true,
+    supportsBatch: true,
+    notes: "Run a user-registered custom tool by name. Method must be static, take JObject args, return JToken/JObject/string. Safe invocation with error handling. Use list_custom_tools first to discover available tools."
   }
 ];
 

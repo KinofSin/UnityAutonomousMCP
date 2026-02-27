@@ -98,6 +98,14 @@ namespace AutonomousMcp.Editor
                         return HandleManageTexture(args);
                     case "refresh_unity":
                         return HandleRefreshUnity(args);
+                    case "list_menu_items":
+                        return HandleListMenuItems(args);
+                    case "inspect_type":
+                        return HandleInspectType(args);
+                    case "list_custom_tools":
+                        return HandleListCustomTools(args);
+                    case "execute_custom_tool":
+                        return HandleExecuteCustomTool(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -181,6 +189,10 @@ namespace AutonomousMcp.Editor
                     "manage_scriptable_object",
                     "manage_texture",
                     "refresh_unity",
+                    "list_menu_items",
+                    "inspect_type",
+                    "list_custom_tools",
+                    "execute_custom_tool",
                     "batch_execute"
                 },
                 supportedActions = new
@@ -199,7 +211,8 @@ namespace AutonomousMcp.Editor
                     manage_layer_tag = new[] { "get", "set_layer", "set_tag", "list_layers", "list_tags", "list_sorting_layers" },
                     manage_project_settings = new[] { "get_player_settings", "set_player_setting", "get_quality_settings", "get_physics_settings", "get_time_settings" },
                     manage_scriptable_object = new[] { "find", "get_properties", "set_property", "create", "list_fields" },
-                    manage_texture = new[] { "get_import_settings", "set_import_settings", "get_info", "find_textures" }
+                    manage_texture = new[] { "get_import_settings", "set_import_settings", "get_info", "find_textures" },
+                    inspect_type = new[] { "methods", "properties", "fields", "all" }
                 }
             }));
         }
@@ -4227,6 +4240,310 @@ public static class __McpEval
                 importAll,
                 isCompiling = EditorApplication.isCompiling
             }));
+        }
+
+        // ───────── list_menu_items ─────────
+
+        private static AutonomousMcpToolResponse HandleListMenuItems(JObject args)
+        {
+            var filter = args.Value<string>("filter") ?? string.Empty;
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 200, 1000));
+
+            var menuItems = new JArray();
+            var flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                // Skip core Unity/System assemblies for speed unless filter is empty
+                var asmName = asm.GetName().Name;
+                if (string.IsNullOrEmpty(filter) &&
+                    (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                     asmName.StartsWith("Mono.") || asmName.StartsWith("netstandard")))
+                    continue;
+
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch { continue; }
+
+                foreach (var type in types)
+                {
+                    foreach (var method in type.GetMethods(flags))
+                    {
+                        var menuAttr = method.GetCustomAttribute<MenuItem>();
+                        if (menuAttr == null) continue;
+
+                        var itemPath = menuAttr.menuItem;
+                        if (string.IsNullOrEmpty(itemPath)) continue;
+
+                        if (!string.IsNullOrEmpty(filter) &&
+                            !itemPath.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                            continue;
+
+                        menuItems.Add(JToken.FromObject(new
+                        {
+                            path = itemPath,
+                            type = type.FullName,
+                            method = method.Name,
+                            assembly = asmName
+                        }));
+
+                        if (menuItems.Count >= limit) break;
+                    }
+                    if (menuItems.Count >= limit) break;
+                }
+                if (menuItems.Count >= limit) break;
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "list_menu_items",
+                filter = string.IsNullOrEmpty(filter) ? "(all)" : filter,
+                count = menuItems.Count,
+                menuItems
+            }));
+        }
+
+        // ───────── inspect_type ─────────
+
+        private static AutonomousMcpToolResponse HandleInspectType(JObject args)
+        {
+            var typeName = args.Value<string>("type") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("inspect_type requires a 'type' name (e.g. 'ModularAvatarMergeAnimator', 'VRCFuryComponent', 'Camera').");
+
+            var type = ResolveType(typeName);
+            if (type == null)
+                return Error($"Type '{typeName}' not found in any loaded assembly.");
+
+            var include = args.Value<string>("include") ?? "all";
+            var filter = args.Value<string>("filter") ?? string.Empty;
+            var includeInherited = args.Value<bool?>("include_inherited") ?? false;
+
+            var bindingFlags = BindingFlags.Public | BindingFlags.Instance | BindingFlags.Static;
+            if (!includeInherited) bindingFlags |= BindingFlags.DeclaredOnly;
+
+            var result = new JObject
+            {
+                ["type"] = type.FullName,
+                ["assembly"] = type.Assembly.GetName().Name,
+                ["baseType"] = type.BaseType?.FullName,
+                ["isAbstract"] = type.IsAbstract,
+                ["isSealed"] = type.IsSealed,
+                ["isEnum"] = type.IsEnum
+            };
+
+            // Interfaces
+            var interfaces = type.GetInterfaces();
+            if (interfaces.Length > 0)
+                result["interfaces"] = new JArray(interfaces.Select(i => i.Name).ToArray());
+
+            // Enum values
+            if (type.IsEnum)
+            {
+                var enumValues = new JArray();
+                foreach (var val in Enum.GetValues(type))
+                    enumValues.Add(JToken.FromObject(new { name = val.ToString(), value = (int)val }));
+                result["enumValues"] = enumValues;
+                return Success(result);
+            }
+
+            // Methods
+            if (include == "all" || include == "methods")
+            {
+                var methods = new JArray();
+                foreach (var m in type.GetMethods(bindingFlags))
+                {
+                    if (m.IsSpecialName) continue; // skip property getters/setters
+                    if (!string.IsNullOrEmpty(filter) &&
+                        m.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    var paramList = m.GetParameters().Select(p => new
+                    {
+                        name = p.Name,
+                        type = p.ParameterType.Name,
+                        isOptional = p.IsOptional,
+                        defaultValue = p.HasDefaultValue ? p.DefaultValue?.ToString() : null
+                    }).ToArray();
+
+                    methods.Add(JToken.FromObject(new
+                    {
+                        name = m.Name,
+                        returnType = m.ReturnType.Name,
+                        isStatic = m.IsStatic,
+                        parameters = paramList
+                    }));
+                }
+                result["methods"] = methods;
+                result["methodCount"] = methods.Count;
+            }
+
+            // Properties
+            if (include == "all" || include == "properties")
+            {
+                var props = new JArray();
+                foreach (var p in type.GetProperties(bindingFlags))
+                {
+                    if (!string.IsNullOrEmpty(filter) &&
+                        p.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    props.Add(JToken.FromObject(new
+                    {
+                        name = p.Name,
+                        type = p.PropertyType.Name,
+                        canRead = p.CanRead,
+                        canWrite = p.CanWrite,
+                        isStatic = (p.GetMethod ?? p.SetMethod)?.IsStatic ?? false
+                    }));
+                }
+                result["properties"] = props;
+                result["propertyCount"] = props.Count;
+            }
+
+            // Fields
+            if (include == "all" || include == "fields")
+            {
+                var fields = new JArray();
+                foreach (var f in type.GetFields(bindingFlags))
+                {
+                    if (!string.IsNullOrEmpty(filter) &&
+                        f.Name.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
+                        continue;
+
+                    fields.Add(JToken.FromObject(new
+                    {
+                        name = f.Name,
+                        type = f.FieldType.Name,
+                        isStatic = f.IsStatic,
+                        isReadOnly = f.IsInitOnly,
+                        hasSerializeField = f.GetCustomAttribute<SerializeField>() != null
+                    }));
+                }
+                result["fields"] = fields;
+                result["fieldCount"] = fields.Count;
+            }
+
+            return Success(result);
+        }
+
+        // ───────── custom tools ([McpTool] attribute) ─────────
+
+        private static Dictionary<string, (MethodInfo method, string description)> _customToolCache;
+        private static bool _customToolsCached;
+
+        private static void EnsureCustomToolCache()
+        {
+            if (_customToolsCached) return;
+            _customToolCache = new Dictionary<string, (MethodInfo, string)>(StringComparer.OrdinalIgnoreCase);
+            _customToolsCached = true;
+
+            var flags = BindingFlags.Static | BindingFlags.Public | BindingFlags.NonPublic;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                var asmName = asm.GetName().Name;
+                // Skip system assemblies
+                if (asmName.StartsWith("System") || asmName.StartsWith("mscorlib") ||
+                    asmName.StartsWith("Mono.") || asmName.StartsWith("netstandard") ||
+                    asmName.StartsWith("Unity.") || asmName.StartsWith("UnityEngine") ||
+                    asmName.StartsWith("UnityEditor") || asmName.StartsWith("Newtonsoft"))
+                    continue;
+
+                Type[] types;
+                try { types = asm.GetTypes(); }
+                catch { continue; }
+
+                foreach (var type in types)
+                {
+                    foreach (var method in type.GetMethods(flags))
+                    {
+                        var attr = method.GetCustomAttributes()
+                            .FirstOrDefault(a => a.GetType().Name == "McpToolAttribute" || a.GetType().Name == "McpTool");
+                        if (attr == null) continue;
+
+                        // Read name + description from attribute via reflection
+                        var attrType = attr.GetType();
+                        var nameVal = attrType.GetProperty("Name")?.GetValue(attr) as string
+                                      ?? attrType.GetField("name")?.GetValue(attr) as string
+                                      ?? method.Name;
+                        var descVal = attrType.GetProperty("Description")?.GetValue(attr) as string
+                                      ?? attrType.GetField("description")?.GetValue(attr) as string
+                                      ?? "";
+
+                        // Method signature must be static JToken Method(JObject args)
+                        var ps = method.GetParameters();
+                        if (ps.Length == 1 && ps[0].ParameterType == typeof(JObject) &&
+                            (method.ReturnType == typeof(JToken) || method.ReturnType == typeof(JObject) || method.ReturnType == typeof(string)))
+                        {
+                            _customToolCache[nameVal] = (method, descVal);
+                        }
+                    }
+                }
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleListCustomTools(JObject args)
+        {
+            // Force re-scan if requested
+            if (args.Value<bool?>("rescan") == true) _customToolsCached = false;
+            EnsureCustomToolCache();
+
+            var tools = new JArray();
+            foreach (var kv in _customToolCache)
+            {
+                tools.Add(JToken.FromObject(new
+                {
+                    name = kv.Key,
+                    description = kv.Value.description,
+                    method = kv.Value.method.Name,
+                    declaringType = kv.Value.method.DeclaringType?.FullName,
+                    assembly = kv.Value.method.DeclaringType?.Assembly.GetName().Name
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "list_custom_tools",
+                count = tools.Count,
+                tools,
+                hint = tools.Count == 0
+                    ? "No custom tools found. To register a custom tool, create a static method with [McpTool(\"name\", \"description\")] attribute that takes JObject and returns JToken."
+                    : null
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleExecuteCustomTool(JObject args)
+        {
+            var toolName = args.Value<string>("tool_name") ?? args.Value<string>("name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(toolName))
+                return Error("execute_custom_tool requires a 'tool_name'.");
+
+            EnsureCustomToolCache();
+
+            if (!_customToolCache.TryGetValue(toolName, out var entry))
+                return Error($"Custom tool '{toolName}' not found. Use list_custom_tools to see available tools.");
+
+            var toolArgs = args["args"] as JObject ?? args["params"] as JObject ?? new JObject();
+
+            try
+            {
+                var result = entry.method.Invoke(null, new object[] { toolArgs });
+
+                if (result is JToken jt)
+                    return Success(jt);
+                if (result is string s)
+                    return Success(JToken.FromObject(new { result = s }));
+
+                return Success(JToken.FromObject(new { result = result?.ToString() }));
+            }
+            catch (TargetInvocationException tie)
+            {
+                return Error($"Custom tool '{toolName}' threw: {tie.InnerException?.Message ?? tie.Message}");
+            }
+            catch (Exception ex)
+            {
+                return Error($"Custom tool '{toolName}' error: {ex.Message}");
+            }
         }
 
         // ───────── batch_execute ─────────

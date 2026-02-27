@@ -516,6 +516,55 @@ export async function startMcpServer(): Promise<void> {
     async (input) => callUnity("refresh_unity", input)
   );
 
+  // ── list_menu_items ──
+
+  server.tool(
+    "list_menu_items",
+    "List all registered Unity Editor MenuItem paths. Discovers what menu commands exist from installed packages (VRCFury, Modular Avatar, Poiyomi, etc.) and user scripts. Use with execute_menu_item to run them.",
+    {
+      filter: z.string().optional().describe("Filter menu items by path substring (e.g. 'VRCFury', 'Modular Avatar', 'Tools', 'Poiyomi')"),
+      limit: z.number().int().min(1).max(1000).optional().describe("Max results (default: 200)"),
+    },
+    async (input) => callUnity("list_menu_items", input)
+  );
+
+  // ── inspect_type ──
+
+  server.tool(
+    "inspect_type",
+    "Inspect any C# type's API surface: methods (with parameter signatures), properties, fields. Works on installed package types (VRCFuryComponent, ModularAvatarMergeAnimator, VRCAvatarDescriptor, etc.), Unity types, and user scripts. Essential for learning how to call package APIs via execute_csharp.",
+    {
+      type: z.string().min(1).describe("Type name to inspect (short or fully qualified, e.g. 'Camera', 'VRCFuryComponent', 'ModularAvatarMergeAnimator', 'TextureImporterCompression')"),
+      include: z.enum(["all", "methods", "properties", "fields"]).optional().describe("What to include (default: all)"),
+      filter: z.string().optional().describe("Filter members by name substring"),
+      include_inherited: z.boolean().optional().describe("Include inherited members from base classes (default: false — declared only)"),
+    },
+    async (input) => callUnity("inspect_type", input)
+  );
+
+  // ── list_custom_tools ──
+
+  server.tool(
+    "list_custom_tools",
+    "Discover user-registered custom MCP tools. Scans project assemblies for static methods tagged with [McpTool] attribute. These are project-specific automation tools created by users.",
+    {
+      rescan: z.boolean().optional().describe("Force re-scan assemblies (default: false, uses cache)"),
+    },
+    async (input) => callUnity("list_custom_tools", input)
+  );
+
+  // ── execute_custom_tool ──
+
+  server.tool(
+    "execute_custom_tool",
+    "Execute a user-registered custom MCP tool by name. Use list_custom_tools first to discover available tools.",
+    {
+      tool_name: z.string().min(1).describe("Name of the custom tool to execute"),
+      args: z.record(z.unknown()).optional().describe("Arguments to pass to the custom tool as JSON object"),
+    },
+    async (input) => callUnity("execute_custom_tool", input)
+  );
+
   // ── validate_script ──
 
   server.tool(
