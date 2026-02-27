@@ -64,7 +64,7 @@
 
 ```bash
 # Clone the repository
-git clone https://github.com/your-repo/UnityAutonomousMCP.git
+git clone https://github.com/KinofSin/UnityAutonomousMCP.git
 cd UnityAutonomousMCP
 
 # Install Unity Package

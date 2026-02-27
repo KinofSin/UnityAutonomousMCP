@@ -26,7 +26,7 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     category: "scene",
     destructive: false,
     supportsBatch: true,
-    notes: "Scene inspection and safe active-scene save (returns explicit error if scene has no saved path)."
+    notes: "Scene actions: inspect_active_scene, save_active_scene, open_scene (auto-saves dirty scene), list_scenes (find all .unity assets)."
   },
   {
     tool: "manage_gameobject",
@@ -36,11 +36,46 @@ export const TOOL_CAPABILITIES: ToolCapability[] = [
     notes: "Expanded lifecycle and hierarchy actions: create/create_empty/create_primitive, find/find_by_name/find_contains, set_transform(local|world), get_world_transform, reparent, get_children/get_parent/get_full_hierarchy, set_active, rename, destroy."
   },
   {
+    tool: "manage_component",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Component lifecycle: add (by type name), remove, get_all (list components on GO), get_properties (SerializedProperty introspection), set_property (write int/float/bool/string/enum/color/vector/objectRef)."
+  },
+  {
     tool: "manage_script",
     category: "script",
     destructive: true,
     supportsBatch: true,
     notes: "Create/update/delete script files. Deletion requires explicit policy override."
+  },
+  {
+    tool: "read_script",
+    category: "script",
+    destructive: false,
+    supportsBatch: false,
+    notes: "Read any script file by asset path (Assets/...). Returns full contents, line count, and size."
+  },
+  {
+    tool: "manage_asset",
+    category: "assets",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Asset actions: find (AssetDatabase filter search with folder/limit), instantiate_prefab (load and place prefab with optional parent/transform)."
+  },
+  {
+    tool: "manage_editor",
+    category: "editor",
+    destructive: false,
+    supportsBatch: true,
+    notes: "Editor control: enter_play_mode, exit_play_mode, pause (toggle), step, undo, redo."
+  },
+  {
+    tool: "execute_menu_item",
+    category: "editor",
+    destructive: true,
+    supportsBatch: true,
+    notes: "Execute any Unity Editor menu item by path (e.g. 'Tools/My Tool'). Marked destructive as menu items can have side effects."
   },
   {
     tool: "validate_script",

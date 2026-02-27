@@ -1,6 +1,8 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Linq;
+using System.Reflection;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEditor.SceneManagement;
@@ -47,6 +49,16 @@ namespace AutonomousMcp.Editor
                         return HandleRunTests(args);
                     case "get_test_job":
                         return HandleGetTestJob(args);
+                    case "manage_component":
+                        return HandleManageComponent(args);
+                    case "execute_menu_item":
+                        return HandleExecuteMenuItem(args);
+                    case "manage_asset":
+                        return HandleManageAsset(args);
+                    case "manage_editor":
+                        return HandleManageEditor(args);
+                    case "read_script":
+                        return HandleReadScript(args);
                     case "batch_execute":
                         return HandleBatchExecute(args, depth);
                     default:
@@ -102,7 +114,12 @@ namespace AutonomousMcp.Editor
                     "read_console",
                     "manage_scene",
                     "manage_gameobject",
+                    "manage_component",
                     "manage_script",
+                    "manage_asset",
+                    "manage_editor",
+                    "read_script",
+                    "execute_menu_item",
                     "validate_script",
                     "run_tests",
                     "get_test_job",
@@ -110,9 +127,12 @@ namespace AutonomousMcp.Editor
                 },
                 supportedActions = new
                 {
-                    manage_scene = new[] { "inspect_active_scene", "save_active_scene" },
+                    manage_scene = new[] { "inspect_active_scene", "save_active_scene", "open_scene", "list_scenes" },
                     manage_gameobject = new[] { "create", "create_empty", "create_primitive", "find", "find_by_name", "find_contains", "set_transform", "get_world_transform", "reparent", "get_children", "get_parent", "get_full_hierarchy", "set_active", "rename", "destroy" },
-                    manage_script = new[] { "create_or_update" }
+                    manage_component = new[] { "add", "remove", "get_all", "get_properties", "set_property" },
+                    manage_script = new[] { "create_or_update" },
+                    manage_asset = new[] { "find", "instantiate_prefab" },
+                    manage_editor = new[] { "enter_play_mode", "exit_play_mode", "pause", "step", "undo", "redo" }
                 }
             }));
         }
@@ -156,6 +176,45 @@ namespace AutonomousMcp.Editor
                         action,
                         saved,
                         path = scene.path
+                    }));
+                }
+                case "open_scene":
+                {
+                    var scenePath = args.Value<string>("path") ?? args.Value<string>("scene_path") ?? string.Empty;
+                    if (string.IsNullOrWhiteSpace(scenePath))
+                        return Error("open_scene requires a non-empty path (e.g. 'Assets/Scenes/MyScene.unity').");
+
+                    if (scene.isDirty)
+                    {
+                        var saveFirst = args.Value<bool?>("save_first") ?? true;
+                        if (saveFirst && !string.IsNullOrWhiteSpace(scene.path))
+                            EditorSceneManager.SaveScene(scene, scene.path, false);
+                    }
+
+                    var opened = EditorSceneManager.OpenScene(scenePath, OpenSceneMode.Single);
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        name = opened.name,
+                        path = opened.path,
+                        isLoaded = opened.isLoaded
+                    }));
+                }
+                case "list_scenes":
+                {
+                    var guids = AssetDatabase.FindAssets("t:Scene");
+                    var scenes = new JArray();
+                    foreach (var guid in guids)
+                    {
+                        var path = AssetDatabase.GUIDToAssetPath(guid);
+                        scenes.Add(JToken.FromObject(new { guid, path }));
+                    }
+
+                    return Success(JToken.FromObject(new
+                    {
+                        action,
+                        count = scenes.Count,
+                        scenes
                     }));
                 }
                 default:
@@ -748,6 +807,548 @@ namespace AutonomousMcp.Editor
 
                 AddChildEntriesRecursive(child, children);
             }
+        }
+
+        // ───────── manage_component ─────────
+
+        private static AutonomousMcpToolResponse HandleManageComponent(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "add":
+                    return HandleAddComponent(args);
+                case "remove":
+                    return HandleRemoveComponent(args);
+                case "get_all":
+                    return HandleGetAllComponents(args);
+                case "get_properties":
+                    return HandleGetComponentProperties(args);
+                case "set_property":
+                    return HandleSetComponentProperty(args);
+                default:
+                    return Error($"Unsupported manage_component action '{action}'.");
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleAddComponent(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("add requires a valid target by instanceId or name.");
+
+            var typeName = args.Value<string>("component_type") ?? args.Value<string>("componentType") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("add requires a non-empty component_type.");
+
+            var type = ResolveType(typeName);
+            if (type == null)
+                return Error($"Type '{typeName}' not found. Use fully-qualified name if ambiguous.");
+
+            if (target.GetComponent(type) != null)
+            {
+                return Success(JToken.FromObject(new
+                {
+                    action = "add",
+                    name = target.name,
+                    componentType = type.FullName,
+                    alreadyPresent = true
+                }));
+            }
+
+            Undo.AddComponent(target, type);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "add",
+                name = target.name,
+                instanceId = target.GetInstanceID(),
+                componentType = type.FullName,
+                added = true
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleRemoveComponent(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("remove requires a valid target by instanceId or name.");
+
+            var typeName = args.Value<string>("component_type") ?? args.Value<string>("componentType") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("remove requires a non-empty component_type.");
+
+            var type = ResolveType(typeName);
+            if (type == null)
+                return Error($"Type '{typeName}' not found.");
+
+            var component = target.GetComponent(type);
+            if (component == null)
+                return Error($"Component '{typeName}' not found on '{target.name}'.");
+
+            Undo.DestroyObjectImmediate(component);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "remove",
+                name = target.name,
+                componentType = type.FullName,
+                removed = true
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetAllComponents(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("get_all requires a valid target by instanceId or name.");
+
+            var components = target.GetComponents<Component>();
+            var list = new JArray();
+
+            foreach (var component in components)
+            {
+                if (component == null)
+                {
+                    list.Add(JToken.FromObject(new { type = "(missing script)", instanceId = 0 }));
+                    continue;
+                }
+
+                list.Add(JToken.FromObject(new
+                {
+                    type = component.GetType().FullName,
+                    instanceId = component.GetInstanceID(),
+                    enabled = (component is Behaviour b) ? (bool?)b.enabled : null
+                }));
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_all",
+                name = target.name,
+                count = list.Count,
+                components = list
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleGetComponentProperties(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("get_properties requires a valid target by instanceId or name.");
+
+            var typeName = args.Value<string>("component_type") ?? args.Value<string>("componentType") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("get_properties requires a non-empty component_type.");
+
+            var type = ResolveType(typeName);
+            if (type == null)
+                return Error($"Type '{typeName}' not found.");
+
+            var component = target.GetComponent(type);
+            if (component == null)
+                return Error($"Component '{typeName}' not found on '{target.name}'.");
+
+            var so = new SerializedObject(component);
+            var props = new JArray();
+            var iterator = so.GetIterator();
+            bool enterChildren = true;
+
+            while (iterator.NextVisible(enterChildren))
+            {
+                enterChildren = false;
+                props.Add(JToken.FromObject(new
+                {
+                    name = iterator.name,
+                    displayName = iterator.displayName,
+                    type = iterator.propertyType.ToString(),
+                    value = ReadSerializedPropertyValue(iterator),
+                    editable = iterator.editable
+                }));
+            }
+
+            so.Dispose();
+
+            return Success(JToken.FromObject(new
+            {
+                action = "get_properties",
+                gameObject = target.name,
+                componentType = type.FullName,
+                count = props.Count,
+                properties = props
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleSetComponentProperty(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("set_property requires a valid target by instanceId or name.");
+
+            var typeName = args.Value<string>("component_type") ?? args.Value<string>("componentType") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(typeName))
+                return Error("set_property requires a non-empty component_type.");
+
+            var type = ResolveType(typeName);
+            if (type == null)
+                return Error($"Type '{typeName}' not found.");
+
+            var component = target.GetComponent(type);
+            if (component == null)
+                return Error($"Component '{typeName}' not found on '{target.name}'.");
+
+            var propertyName = args.Value<string>("property") ?? args.Value<string>("property_name") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(propertyName))
+                return Error("set_property requires a non-empty property name.");
+
+            var so = new SerializedObject(component);
+            var prop = so.FindProperty(propertyName);
+            if (prop == null)
+            {
+                so.Dispose();
+                return Error($"Property '{propertyName}' not found on '{typeName}'.");
+            }
+
+            var valueToken = args["value"];
+            if (valueToken == null)
+            {
+                so.Dispose();
+                return Error("set_property requires a 'value' parameter.");
+            }
+
+            bool written = WriteSerializedPropertyValue(prop, valueToken);
+            if (!written)
+            {
+                so.Dispose();
+                return Error($"Could not write value to property '{propertyName}' (type: {prop.propertyType}).");
+            }
+
+            so.ApplyModifiedProperties();
+            so.Dispose();
+
+            return Success(JToken.FromObject(new
+            {
+                action = "set_property",
+                gameObject = target.name,
+                componentType = type.FullName,
+                property = propertyName,
+                written = true
+            }));
+        }
+
+        private static object ReadSerializedPropertyValue(SerializedProperty prop)
+        {
+            switch (prop.propertyType)
+            {
+                case SerializedPropertyType.Integer: return prop.intValue;
+                case SerializedPropertyType.Boolean: return prop.boolValue;
+                case SerializedPropertyType.Float: return prop.floatValue;
+                case SerializedPropertyType.String: return prop.stringValue;
+                case SerializedPropertyType.Enum: return prop.enumNames.Length > prop.enumValueIndex && prop.enumValueIndex >= 0 ? prop.enumNames[prop.enumValueIndex] : prop.enumValueIndex.ToString();
+                case SerializedPropertyType.Color:
+                    var c = prop.colorValue;
+                    return new { r = c.r, g = c.g, b = c.b, a = c.a };
+                case SerializedPropertyType.Vector2:
+                    var v2 = prop.vector2Value;
+                    return new { x = v2.x, y = v2.y };
+                case SerializedPropertyType.Vector3:
+                    var v3 = prop.vector3Value;
+                    return new { x = v3.x, y = v3.y, z = v3.z };
+                case SerializedPropertyType.Vector4:
+                    var v4 = prop.vector4Value;
+                    return new { x = v4.x, y = v4.y, z = v4.z, w = v4.w };
+                case SerializedPropertyType.ObjectReference:
+                    var obj = prop.objectReferenceValue;
+                    return obj != null ? new { name = obj.name, type = obj.GetType().Name, instanceId = obj.GetInstanceID() } : (object)null;
+                case SerializedPropertyType.LayerMask: return prop.intValue;
+                case SerializedPropertyType.ArraySize: return prop.intValue;
+                default: return $"({prop.propertyType})";
+            }
+        }
+
+        private static bool WriteSerializedPropertyValue(SerializedProperty prop, JToken valueToken)
+        {
+            switch (prop.propertyType)
+            {
+                case SerializedPropertyType.Integer:
+                    prop.intValue = valueToken.Value<int>();
+                    return true;
+                case SerializedPropertyType.Boolean:
+                    prop.boolValue = valueToken.Value<bool>();
+                    return true;
+                case SerializedPropertyType.Float:
+                    prop.floatValue = valueToken.Value<float>();
+                    return true;
+                case SerializedPropertyType.String:
+                    prop.stringValue = valueToken.Value<string>();
+                    return true;
+                case SerializedPropertyType.Enum:
+                    if (valueToken.Type == JTokenType.Integer)
+                    {
+                        prop.enumValueIndex = valueToken.Value<int>();
+                    }
+                    else
+                    {
+                        var enumStr = valueToken.Value<string>() ?? string.Empty;
+                        int idx = Array.IndexOf(prop.enumNames, enumStr);
+                        if (idx < 0) return false;
+                        prop.enumValueIndex = idx;
+                    }
+                    return true;
+                case SerializedPropertyType.Color:
+                    if (valueToken is JObject cObj)
+                    {
+                        prop.colorValue = new Color(
+                            cObj.Value<float?>("r") ?? 0, cObj.Value<float?>("g") ?? 0,
+                            cObj.Value<float?>("b") ?? 0, cObj.Value<float?>("a") ?? 1);
+                        return true;
+                    }
+                    return false;
+                case SerializedPropertyType.Vector2:
+                    if (valueToken is JObject v2Obj)
+                    {
+                        prop.vector2Value = new Vector2(
+                            v2Obj.Value<float?>("x") ?? 0, v2Obj.Value<float?>("y") ?? 0);
+                        return true;
+                    }
+                    return false;
+                case SerializedPropertyType.Vector3:
+                    if (valueToken is JObject v3Obj)
+                    {
+                        prop.vector3Value = new Vector3(
+                            v3Obj.Value<float?>("x") ?? 0, v3Obj.Value<float?>("y") ?? 0,
+                            v3Obj.Value<float?>("z") ?? 0);
+                        return true;
+                    }
+                    return false;
+                case SerializedPropertyType.Vector4:
+                    if (valueToken is JObject v4Obj)
+                    {
+                        prop.vector4Value = new Vector4(
+                            v4Obj.Value<float?>("x") ?? 0, v4Obj.Value<float?>("y") ?? 0,
+                            v4Obj.Value<float?>("z") ?? 0, v4Obj.Value<float?>("w") ?? 0);
+                        return true;
+                    }
+                    return false;
+                case SerializedPropertyType.ObjectReference:
+                    var instanceId = valueToken.Value<int?>();
+                    if (instanceId.HasValue)
+                    {
+                        prop.objectReferenceValue = EditorUtility.InstanceIDToObject(instanceId.Value);
+                        return true;
+                    }
+                    return false;
+                default:
+                    return false;
+            }
+        }
+
+        private static Type ResolveType(string typeName)
+        {
+            // Try direct lookup first
+            var type = Type.GetType(typeName);
+            if (type != null) return type;
+
+            // Search all loaded assemblies
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                type = asm.GetType(typeName);
+                if (type != null) return type;
+            }
+
+            // Fuzzy: search by short name (last segment)
+            var shortName = typeName.Contains('.') ? typeName : typeName;
+            foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
+            {
+                try
+                {
+                    type = asm.GetTypes().FirstOrDefault(t =>
+                        string.Equals(t.Name, shortName, StringComparison.OrdinalIgnoreCase) ||
+                        string.Equals(t.FullName, typeName, StringComparison.OrdinalIgnoreCase));
+                    if (type != null) return type;
+                }
+                catch { /* skip assemblies that throw on GetTypes() */ }
+            }
+
+            return null;
+        }
+
+        // ───────── execute_menu_item ─────────
+
+        private static AutonomousMcpToolResponse HandleExecuteMenuItem(JObject args)
+        {
+            var menuPath = args.Value<string>("menu_path") ?? args.Value<string>("menuPath") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(menuPath))
+                return Error("execute_menu_item requires a non-empty menu_path (e.g. 'Tools/My Tool').");
+
+            var result = EditorApplication.ExecuteMenuItem(menuPath);
+
+            return Success(JToken.FromObject(new
+            {
+                menuPath,
+                executed = result
+            }));
+        }
+
+        // ───────── manage_asset ─────────
+
+        private static AutonomousMcpToolResponse HandleManageAsset(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "find":
+                    return HandleFindAssets(args);
+                case "instantiate_prefab":
+                    return HandleInstantiatePrefab(args);
+                default:
+                    return Error($"Unsupported manage_asset action '{action}'.");
+            }
+        }
+
+        private static AutonomousMcpToolResponse HandleFindAssets(JObject args)
+        {
+            var filter = args.Value<string>("filter") ?? string.Empty;
+            var searchFolder = args.Value<string>("folder") ?? args.Value<string>("search_folder") ?? "Assets";
+            var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 50, 200));
+
+            string[] guids;
+            if (!string.IsNullOrWhiteSpace(searchFolder))
+                guids = AssetDatabase.FindAssets(filter, new[] { searchFolder });
+            else
+                guids = AssetDatabase.FindAssets(filter);
+
+            var results = new JArray();
+            int count = 0;
+            foreach (var guid in guids)
+            {
+                if (count >= limit) break;
+                var path = AssetDatabase.GUIDToAssetPath(guid);
+                var assetType = AssetDatabase.GetMainAssetTypeAtPath(path);
+                results.Add(JToken.FromObject(new
+                {
+                    guid,
+                    path,
+                    type = assetType?.Name ?? "Unknown"
+                }));
+                count++;
+            }
+
+            return Success(JToken.FromObject(new
+            {
+                action = "find",
+                filter,
+                folder = searchFolder,
+                totalFound = guids.Length,
+                returned = results.Count,
+                assets = results
+            }));
+        }
+
+        private static AutonomousMcpToolResponse HandleInstantiatePrefab(JObject args)
+        {
+            var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("assetPath") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(assetPath))
+                return Error("instantiate_prefab requires a non-empty asset_path.");
+
+            var prefab = AssetDatabase.LoadAssetAtPath<GameObject>(assetPath);
+            if (prefab == null)
+                return Error($"No prefab found at '{assetPath}'.");
+
+            Transform parentTransform = null;
+            var parentName = args.Value<string>("parent") ?? args.Value<string>("parent_name");
+            if (!string.IsNullOrWhiteSpace(parentName))
+            {
+                var parentGo = GameObject.Find(parentName);
+                if (parentGo != null) parentTransform = parentGo.transform;
+            }
+
+            var instance = parentTransform != null
+                ? (GameObject)PrefabUtility.InstantiatePrefab(prefab, parentTransform)
+                : (GameObject)PrefabUtility.InstantiatePrefab(prefab);
+
+            instance.transform.localPosition = ReadVector3(args["position"], Vector3.zero);
+            var euler = ReadVector3(args["rotation"], Vector3.zero);
+            instance.transform.localRotation = Quaternion.Euler(euler);
+            instance.transform.localScale = ReadVector3(args["scale"], Vector3.one);
+
+            Undo.RegisterCreatedObjectUndo(instance, "MCP: Instantiate Prefab");
+
+            return Success(JToken.FromObject(new
+            {
+                action = "instantiate_prefab",
+                assetPath,
+                name = instance.name,
+                instanceId = instance.GetInstanceID(),
+                fullPath = GetFullPath(instance.transform)
+            }));
+        }
+
+        // ───────── manage_editor ─────────
+
+        private static AutonomousMcpToolResponse HandleManageEditor(JObject args)
+        {
+            var action = args.Value<string>("action") ?? string.Empty;
+
+            switch (action)
+            {
+                case "enter_play_mode":
+                    EditorApplication.isPlaying = true;
+                    return Success(JToken.FromObject(new { action, isPlaying = true }));
+
+                case "exit_play_mode":
+                    EditorApplication.isPlaying = false;
+                    return Success(JToken.FromObject(new { action, isPlaying = false }));
+
+                case "pause":
+                    EditorApplication.isPaused = !EditorApplication.isPaused;
+                    return Success(JToken.FromObject(new { action, isPaused = EditorApplication.isPaused }));
+
+                case "step":
+                    EditorApplication.Step();
+                    return Success(JToken.FromObject(new { action, stepped = true }));
+
+                case "undo":
+                    Undo.PerformUndo();
+                    return Success(JToken.FromObject(new { action, performed = true }));
+
+                case "redo":
+                    Undo.PerformRedo();
+                    return Success(JToken.FromObject(new { action, performed = true }));
+
+                default:
+                    return Error($"Unsupported manage_editor action '{action}'.");
+            }
+        }
+
+        // ───────── read_script ─────────
+
+        private static AutonomousMcpToolResponse HandleReadScript(JObject args)
+        {
+            var scriptPath = args.Value<string>("scriptPath") ?? args.Value<string>("script_path") ?? string.Empty;
+            if (string.IsNullOrWhiteSpace(scriptPath) || !scriptPath.StartsWith("Assets/", StringComparison.Ordinal))
+                return Error("read_script requires scriptPath starting with 'Assets/'.");
+
+            var projectRoot = Directory.GetParent(Application.dataPath)?.FullName;
+            if (string.IsNullOrEmpty(projectRoot))
+                return Error("Failed to resolve project root.");
+
+            var fullPath = Path.Combine(projectRoot, scriptPath.Replace('/', Path.DirectorySeparatorChar));
+            if (!File.Exists(fullPath))
+                return Error($"File not found: '{scriptPath}'.");
+
+            var contents = File.ReadAllText(fullPath);
+            var lineCount = contents.Split('\n').Length;
+
+            return Success(JToken.FromObject(new
+            {
+                scriptPath,
+                lineCount,
+                sizeBytes = contents.Length,
+                contents
+            }));
         }
 
         private static AutonomousMcpToolResponse HandleValidateScript(JObject args)
