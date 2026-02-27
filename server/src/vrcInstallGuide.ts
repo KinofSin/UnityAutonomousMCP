@@ -1,6 +1,7 @@
 /**
- * VRChat Unity Install Guide — structured install/setup/test data for 60+ tools.
- * Sourced from VRChat_Unity_Complete_Install_Guide.md (3356 lines).
+ * VRChat Unity Install Guide — structured install/setup/test data for 55+ tools.
+ * Covers: Unity avatar tools, OSC libraries, OSCQuery, face tracking, FBT stacks,
+ * SteamVR tools, haptics, desktop companions, OSC apps & routers.
  * Queryable by tool name, section, or free-text search.
  */
 
@@ -730,6 +731,262 @@ export const INSTALL_ENTRIES: InstallEntry[] = [
       "Drag source controller → Merge. Repeat for Parameters and Expression Menu",
       "Used for tools that don't use MA and give you raw FX controllers to merge",
     ],
+  },
+
+  // ═══════════════════════════════════════════════════════════════
+  // OSC / SteamVR / Face Tracking / FBT / Haptics Install Entries
+  // ═══════════════════════════════════════════════════════════════
+
+  // Section: OSC Libraries
+  {
+    id: "oscjack", name: "OscJack", section: "OSC Libraries",
+    type: "manual", cost: "free", author: "Keijiro",
+    url: "https://github.com/keijiro/OscJack",
+    install: [
+      "Unity → Window → Package Manager → + → Add package from git URL",
+      "Enter: https://github.com/keijiro/OscJack.git",
+      "Or via OpenUPM: openupm add jp.keijiro.osc-jack",
+    ],
+    setup: ["Create GameObject → Add OscJackServer or OscJackClient component", "Set port (default 9000 send, 9001 receive for VRChat)"],
+    test: ["Enter Play Mode → send OSC message → check VRChat OSC debug panel"],
+    notes: ["Requires Unity 2021.3+ (OK for 2022.3.22f1)", "Uses System.Net.Sockets — no WebGL support"],
+  },
+  {
+    id: "uosc", name: "uOSC", section: "OSC Libraries",
+    type: "manual", cost: "free", author: "hecomi",
+    url: "https://github.com/hecomi/uOSC",
+    install: [
+      "Unity → Package Manager → + → Add package from git URL",
+      "Enter: https://github.com/hecomi/uOSC.git#upm",
+    ],
+    setup: ["Add uOscServer / uOscClient component to a GameObject", "Configure IP/port in inspector"],
+    test: ["Play Mode → uOscClient sends → verify with Protokol or VRChat OSC debug"],
+  },
+  {
+    id: "extosc", name: "extOSC", section: "OSC Libraries",
+    type: "manual", cost: "free", author: "Iam1337",
+    url: "https://github.com/Iam1337/extOSC",
+    install: [
+      "Via OpenUPM: openupm add com.iam1337.extosc",
+      "Or Unity Asset Store: search 'extOSC' → import",
+      "Or git URL: https://github.com/Iam1337/extOSC.git",
+    ],
+    setup: ["Add OSCReceiver/OSCSender components", "Use component-based mapping (no-code) or scripting API", "extOSC.InEditor package available for editor-time usage"],
+    test: ["Use built-in OSC Debug Console (Window → extOSC → Debug Console)"],
+  },
+  {
+    id: "osccore", name: "OscCore", section: "OSC Libraries",
+    type: "manual", cost: "free", author: "stella3d",
+    url: "https://github.com/stella3d/OscCore",
+    install: ["Download latest release from GitHub", "Import .unitypackage into project"],
+    setup: ["Use OscServer/OscClient classes in C# scripts", "VRChat internally uses a fork of this library"],
+    notes: ["Performance-oriented — good for high-throughput OSC scenarios"],
+  },
+
+  // Section: OSCQuery
+  {
+    id: "vrc-oscquery-lib", name: "vrc-oscquery-lib", section: "OSCQuery",
+    type: "manual", cost: "free", author: "VRChat Community",
+    url: "https://github.com/vrchat-community/vrc-oscquery-lib",
+    install: [
+      "For .NET apps: dotnet add package vrc-oscquery-lib (NuGet)",
+      "For Unity: download source from GitHub → add to Assets/Plugins",
+      "Targets .NET 6 + Framework 4.6 (Unity compatible)",
+    ],
+    setup: [
+      "Call OSCQueryServiceBuilder.WithDefaults() to start HTTP + mDNS advertising",
+      "Configure BEFORE calling WithDefaults() since it starts immediately",
+      "See repo README for full usage examples",
+    ],
+    notes: ["Official reference for VRChat OSCQuery behavior", "Includes OSC tracker alignment notes in osc-trackers.md"],
+  },
+
+  // Section: Face Tracking
+  {
+    id: "vrcfacetracking", name: "VRCFaceTracking (VRCFT)", section: "Face Tracking",
+    type: "manual", cost: "free", author: "benaclejames",
+    url: "https://github.com/benaclejames/VRCFaceTracking",
+    install: [
+      "Download latest release from GitHub releases page",
+      "Run installer or extract portable zip",
+      "Install hardware-specific module (Vive SRanipal, Quest Pro, etc.) from VRCFT module registry",
+    ],
+    setup: [
+      "Launch VRCFT → select face tracking module for your hardware",
+      "Ensure VRChat has OSC enabled (Options → OSC → Enabled)",
+      "Avatar must have Unified Expressions blendshapes (40+ shapes)",
+      "Use FaceTra Shape Creator to generate missing blendshapes on avatar",
+    ],
+    test: [
+      "VRCFT status shows 'Connected' + tracking data flowing",
+      "VRChat OSC debug panel shows /avatar/parameters/v2/ prefixed params updating",
+      "Avatar face moves in mirror in VRChat",
+    ],
+    notes: [
+      "Docs: https://docs.vrcft.io/",
+      "Unified Expressions standard: cross-hardware blendshape naming (ARKit/PerfectSync/SRanipal/FACS compatible)",
+      "Vive Face Tracker: install SRanipal runtime first, USB connection required",
+    ],
+  },
+
+  // Section: Full Body Tracking
+  {
+    id: "slimevr", name: "SlimeVR", section: "Full Body Tracking",
+    type: "manual", cost: "free (DIY) / paid (official trackers)",
+    url: "https://docs.slimevr.dev/",
+    install: [
+      "Download SlimeVR Server from https://slimevr.dev/download",
+      "Run installer → SlimeVR Server app starts",
+      "OpenVR driver installs automatically with server",
+      "Power on SlimeVR trackers → they connect to server via WiFi",
+    ],
+    setup: [
+      "SlimeVR Server → assign body part to each tracker",
+      "Calibrate: stand in T-pose → click Reset",
+      "SteamVR should show virtual trackers appearing",
+      "VRChat: calibrate FBT in-game (grab both triggers + stand in T-pose)",
+    ],
+    test: ["SlimeVR Server shows all trackers green", "SteamVR shows correct number of virtual trackers", "VRChat FBT calibration succeeds and body tracks"],
+    notes: [
+      "No base stations needed — IMU-based tracking",
+      "SlimeTora: bridge for HaritoraX trackers → SlimeVR server",
+      "owoTrack: phone-as-tracker app that feeds into SlimeVR",
+      "OSC tracker support: can send poses via OSC for standalone VRChat",
+    ],
+  },
+  {
+    id: "space-calibrator", name: "OpenVR Space Calibrator", section: "Full Body Tracking",
+    type: "manual", cost: "free",
+    url: "https://github.com/pushrax/OpenVR-SpaceCalibrator",
+    install: [
+      "Download latest release from GitHub releases",
+      "Run installer → adds to SteamVR startup",
+    ],
+    setup: [
+      "Have both tracking systems active in SteamVR (e.g., Quest controllers + Lighthouse trackers)",
+      "Hold one tracked device from each system together",
+      "Space Calibrator → select reference + target devices → Start Calibration",
+      "Move devices together through space → calibration completes",
+    ],
+    test: ["Trackers appear aligned with controllers in SteamVR view", "VRChat FBT calibration succeeds without drift/offset"],
+    notes: ["Essential for mixed tracking setups (Quest + Vive Trackers, etc.)", "Linux fork with continuous calibration: github.com/Stavdel/OpenVR-SpaceCalibrator"],
+  },
+
+  // Section: SteamVR Tools
+  {
+    id: "ovr-advanced-settings", name: "OpenVR Advanced Settings", section: "SteamVR Tools",
+    type: "manual", cost: "free",
+    url: "https://github.com/OpenVR-Advanced-Settings/OpenVR-AdvancedSettings",
+    install: [
+      "Download latest release installer from GitHub releases",
+      "Run installer → integrates with SteamVR automatically",
+    ],
+    setup: ["Launch SteamVR → open dashboard → Advanced Settings tab appears", "Configure: playspace offsets, chaperone profiles, floor fix, audio controls"],
+    test: ["SteamVR dashboard shows Advanced Settings panel", "Space Drag works: hold grip + drag to reposition playspace"],
+  },
+  {
+    id: "ovr-lighthouse-manager", name: "OVR Lighthouse Manager", section: "SteamVR Tools",
+    type: "manual", cost: "free", author: "kurotu",
+    url: "https://github.com/kurotu/OVR-Lighthouse-Manager",
+    install: ["Download from GitHub releases or Gumroad (https://kurotu.gumroad.com/l/uaqwv)", "Extract and run executable"],
+    setup: ["App scans for base stations via BLE", "Click to power on/sleep individual base stations", "Can set to auto-manage on SteamVR start/exit"],
+    notes: ["Requires Bluetooth on PC", "Solves issue where SteamVR auto-power management doesn't work reliably"],
+  },
+
+  // Section: Haptics
+  {
+    id: "bhaptics-vrchat", name: "bHaptics VRChatOSC", section: "Haptics",
+    type: "manual", cost: "free", author: "bHaptics",
+    url: "https://github.com/bhaptics/VRChatOSC",
+    install: [
+      "Install bHaptics Player from https://www.bhaptics.com/support/downloads",
+      "Download bHapticsOSC from GitHub releases",
+      "Run bHapticsOSC.exe (requires bHaptics Player running)",
+    ],
+    setup: [
+      "Pair bHaptics devices in bHaptics Player",
+      "Enable OSC in VRChat (Options → OSC → Enabled)",
+      "Avatar needs haptic contact receivers set up (see repo docs for avatar/world setup)",
+    ],
+    test: ["bHapticsOSC shows 'Connected' to both bHaptics Player and VRChat", "Touch avatar contact points → haptic feedback on device"],
+  },
+  {
+    id: "intiface-central", name: "Intiface Central", section: "Haptics",
+    type: "manual", cost: "free",
+    url: "https://intiface.com/",
+    install: [
+      "Download Intiface Central from https://intiface.com/ or GitHub releases",
+      "Run installer → opens Intiface Central app",
+    ],
+    setup: [
+      "Start Server in Intiface Central",
+      "Scan for devices (BT/USB/serial)",
+      "Connect a VRChat OSC bridge app (OscGoesBrrr, VRC Pleasure, buttplug-osc, etc.)",
+    ],
+    notes: [
+      "Architecture: Buttplug (protocol) → Intiface Engine → Intiface Central (GUI)",
+      "Apps connect to Intiface Central, which manages device communication",
+      "OscGoesBrrr: https://osc.toys/ — simplest VRChat → device bridge",
+    ],
+  },
+
+  // Section: Desktop Companions
+  {
+    id: "vrcx", name: "VRCX", section: "Desktop Companions",
+    type: "manual", cost: "free", author: "vrcx-team",
+    url: "https://github.com/vrcx-team/VRCX",
+    install: ["Download latest release from GitHub releases", "Run installer or extract portable zip"],
+    setup: ["Launch VRCX → sign in with VRChat credentials", "Plugin system: install plugins from https://vrcx-plugin-system.github.io/plugins/"],
+    notes: ["VRCX-OSC-Bridge available for OSC integration (IPC named pipe, ports 9000/9001)"],
+  },
+  {
+    id: "oyasumivr", name: "OyasumiVR", section: "Desktop Companions",
+    type: "manual", cost: "free", author: "Raphiiko",
+    url: "https://github.com/Raphiiko/OyasumiVR",
+    install: ["Download from GitHub releases or Steam (https://store.steampowered.com/app/2538150/)", "Run installer"],
+    setup: ["Launch alongside SteamVR", "Configure sleep detection, avatar automation, SteamVR controls"],
+  },
+  {
+    id: "pulsoidtoosc", name: "PulsoidToOSC", section: "Desktop Companions",
+    type: "manual", cost: "free", author: "Honzackcz",
+    url: "https://github.com/Honzackcz/PulsoidToOSC",
+    install: ["Download latest release from GitHub", "Extract and run executable", "Requires Pulsoid account + compatible heart rate monitor"],
+    setup: [
+      "Connect HR monitor to Pulsoid app",
+      "Run PulsoidToOSC → authenticate with Pulsoid",
+      "OSCQuery auto-configures VRChat connection",
+      "HR appears as avatar parameter or in chatbox",
+    ],
+    notes: ["OSCQuery auto-config means no manual port setup needed"],
+  },
+
+  // Section: OSC Marketplace
+  {
+    id: "vrcosc", name: "VRCOSC", section: "OSC Apps & Routers",
+    type: "manual", cost: "free", author: "VolcanicArts",
+    url: "https://github.com/VolcanicArts/VRCOSC",
+    install: ["Download latest installer from GitHub releases", "Run installer → VRCOSC app launches"],
+    setup: [
+      "Enable OSC in VRChat",
+      "VRCOSC auto-detects VRChat via OSCQuery",
+      "Install modules from built-in module browser",
+      "Download avatar prefabs from vrcosc.com/docs/downloads if needed",
+    ],
+    test: ["VRCOSC shows 'Connected' status", "Modules show active data flow"],
+    notes: ["Modular platform — don't install everything, pick what you need", "Ships avatar prefabs for some modules (import into Unity project)"],
+  },
+  {
+    id: "oscleash", name: "OSCLeash", section: "OSC Apps & Routers",
+    type: "manual", cost: "free", author: "ZenithVal",
+    url: "https://github.com/ZenithVal/OSCLeash",
+    install: ["Download latest release from GitHub", "Extract and run executable"],
+    setup: [
+      "Avatar needs a PhysBone configured as the 'leash' (stretch parameter exposed)",
+      "Enable OSC in VRChat",
+      "Configure OSCLeash with the PhysBone parameter name",
+      "Stretch the PhysBone → player moves in that direction",
+    ],
+    notes: ["Common use cases: leash, tail pulling, hand-holding movement"],
   },
 ];
 
