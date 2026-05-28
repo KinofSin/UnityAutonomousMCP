@@ -730,3 +730,19 @@ Expected: branch on the private repo. (Do not push to `origin`.)
 - **Spec coverage:** Part A steps 1–6 → Tasks 1,2,3,4,5,7,9,10,11 (step 7 "re-add server schemas" is a verified no-op, documented above). Part B → Tasks 12–13. UI parity (3 tabs) → Tasks 9–11. Private repo → Task 0. Verification → Tasks 6, 8, 14.
 - **Placeholder scan:** bulk C# ports use exact `git show` extraction (code already in git); the one authored example (skills `csharp-pro`) names the real source for the systemPrompt; UI method bodies are complete and use only verified APIs.
 - **Type consistency:** `Register(name,mode,category,desc,handler)` (Task 1) matches the call sites in the ported tools; `ToolCategory` additions (Task 2) cover every value the tools use incl. `Build`/`Profiler`; `CheckpointStore.RootDirectory` is added in Task 9 before the UI references it; `GeneratorConfig.Data.defaultOutputDirectory` / `GeneratorRegistry.List()/Count` match the verified APIs.
+
+---
+
+## Part B — static validation log (agent-completed; runtime pending live editor)
+
+Compile-risk review: 5/6 categories clean; fixed `using Unity.Profiling` (unused) in UnityProfilerTool.
+
+High-risk family static API checks (Unity 6 vs 2022.3):
+- `unity_ui` — ✅ uses classic uGUI (Canvas/CanvasScaler/GraphicRaycaster), no UXML; version-agnostic.
+- `unity_cinemachine` — ✅ reflection on `Cinemachine.CinemachineVirtualCamera` (2.x); compiles without the package.
+- `unity_navmesh` — ✅ legacy `UnityEditor.AI.NavMeshBuilder` + `UnityEngine.AI` (built-in to 2022.3), not `Unity.AI.Navigation`.
+- `unity_timeline` — ✅ reflection (`GetProperty("playableAsset")`), no hard Timeline using.
+- `unity_profiler` — ✅ `UnityEngine.Profiling.Sampler` (built-in) after removing the unused `Unity.Profiling` using.
+- `unity_importer` — ⏳ 1 FindProperty call; confirm path resolves at runtime in the editor.
+
+**Remaining (require live Unity 2022.3.22f1 — user-run):** Task 6 compile gate, Task 12/13 runtime smokes per family, Task 14 MCP round-trip + Settings-window walkthrough, then `git push -u private feat/unified-mcp` after the private remote is set up.
