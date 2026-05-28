@@ -1,0 +1,282 @@
+{
+  "version": 1,
+  "generatedAt": "2026-05-28",
+  "skills": [
+    {
+      "id": "vrchat-avatar",
+      "name": "VRChat Avatar Workflow",
+      "category": "vrchat",
+      "description": "End-to-end VRChat avatar setup: descriptor, lipsync, viewpoint, expression menus, parameters, physbones, contacts.",
+      "recommendedTools": ["scan_avatar", "scan_armature", "get_vrc_knowledge", "manage_component", "manage_scriptable_object", "unity_validation"],
+      "examples": [
+        "Scan the active avatar and report descriptor/parameter/physbone health.",
+        "Add a missing VRCAvatarDescriptor with lipsync VisemeBlendShape mode."
+      ],
+      "requiredPackages": ["com.vrchat.avatars", "com.vrchat.base"],
+      "systemPrompt": "When operating on a VRChat avatar, ALWAYS start by calling scan_avatar to capture the current descriptor, parameter budget, physbones, and installed frameworks. Use 256 as the parameter bit budget. Lipsync mode should be VisemeBlendShape for humanoid avatars. View Position should sit at the avatar's eye level. Never modify mesh data without first creating a checkpoint via manage_checkpoint. Prefer Modular Avatar + VRCFury over raw FX layer edits. After any mutation, re-run scan_avatar and unity_validation."
+    },
+    {
+      "id": "vrcfury-toggles",
+      "name": "VRCFury Toggle Authoring",
+      "category": "vrchat",
+      "description": "Author VRCFury toggles, menu items, parameter drivers, expression menu organization.",
+      "recommendedTools": ["scan_avatar", "manage_component", "list_menu_items", "execute_menu_item", "get_install_guide"],
+      "examples": [
+        "Create a VRCFury toggle for accessory X with savedState=true.",
+        "Convert FX-layer toggle to VRCFury Toggle."
+      ],
+      "requiredPackages": ["com.vrcfury.vrcfury"],
+      "systemPrompt": "VRCFury toggles use ToggleComponent on a child GameObject; the inspector binds saved state, menu path, and exclusive tags. Prefer Toggle over Apply During Upload. Use exclusive tags for radio-style mutually exclusive groups. Each toggle costs 1 bit; estimate the new total before adding. Use scan_avatar.toggles_estimate before and after."
+    },
+    {
+      "id": "modular-avatar",
+      "name": "Modular Avatar Setup",
+      "category": "vrchat",
+      "description": "MA Bone Proxy, Merge Armature, Merge Animator, Mesh Settings, Parameters.",
+      "recommendedTools": ["scan_avatar", "manage_component", "execute_menu_item", "get_install_guide"],
+      "examples": [
+        "Add MA Bone Proxy to attach an accessory to Wrist_L.",
+        "Merge an animator with an existing FX layer via MA Merge Animator."
+      ],
+      "requiredPackages": ["nadena.dev.modular-avatar"],
+      "systemPrompt": "Modular Avatar runs at NDMF build time. MA Bone Proxy parents an object to an avatar bone non-destructively. MA Merge Armature welds an external rig into the host armature, optionally with prefix/suffix. MA Merge Animator merges an FX/Action animator with the host. ALL MA work should target prefab variants when possible to keep the host avatar clean. Run unity_validation.broken_refs after MA setup."
+    },
+    {
+      "id": "poiyomi-shader",
+      "name": "Poiyomi Shader Workflows",
+      "category": "vrchat",
+      "description": "Poiyomi material setup, locking, animation properties, optimization.",
+      "recommendedTools": ["manage_material", "list_shaders", "execute_menu_item", "unity_optimization"],
+      "examples": [
+        "Lock all Poiyomi materials in this avatar.",
+        "Switch a body material to Poiyomi 8.1 Pro and copy properties from the old material."
+      ],
+      "requiredPackages": [".poiyomi.toon"],
+      "systemPrompt": "Poiyomi materials should be locked before upload (Tools/Poiyomi/Lock All). Animated shader properties need rename-to-animatable. Never edit a locked material; unlock, edit, relock. Prefer 8.1 (Pro) for new work; 8.0 only for compatibility. Use list_shaders to detect mixed versions. Use unity_optimization.texture_audit to find oversized textures."
+    },
+    {
+      "id": "vrchat-quest",
+      "name": "VRChat Quest/Android Optimization",
+      "category": "vrchat",
+      "description": "Android build target, material limits, polygon limits, ASTC/ETC2 compression.",
+      "recommendedTools": ["unity_build_manage", "unity_optimization", "manage_texture", "unity_importer"],
+      "examples": [
+        "Switch to Android target and audit current avatar for Quest Good rating.",
+        "Convert all textures to ASTC 6x6 and 1024 max."
+      ],
+      "requiredPackages": ["com.vrchat.avatars"],
+      "systemPrompt": "Quest limits: 7500 tris (Excellent), 10k (Good), 15k (Medium), 20k (Poor). Material slots: 2 (Excellent), 4 (Good), 8 (Medium). Textures: 1024 max recommended, ASTC 6x6. Shaders restricted to VRChat Mobile shaders. Use unity_build_manage.switch_target to Android first, then unity_optimization.scene_summary for current stats."
+    },
+    {
+      "id": "osc-faceTracking",
+      "name": "OSC Face Tracking (VRCFT)",
+      "category": "vrchat",
+      "description": "VRCFaceTracking + ARKit/MediaPipe param mapping + OSC.",
+      "recommendedTools": ["get_install_guide", "manage_component", "manage_scriptable_object"],
+      "examples": [
+        "Set up VRCFT parameters on this avatar.",
+        "Add an OSC parameter listener for EyeLeftX."
+      ],
+      "requiredPackages": ["com.vrchat.face-tracking"],
+      "systemPrompt": "VRCFaceTracking runs as a desktop companion app over OSC port 9000/9001. Avatar must declare matching FT_ float parameters in the expression menu. ARKit blendshape names: BrowDownLeft, EyeBlinkLeft, etc. Use UnifiedExpressions when possible. Consult get_install_guide for VRCFT for the latest VPM repo."
+    },
+    {
+      "id": "fbt-stacks",
+      "name": "Full-Body Tracking Stacks",
+      "category": "vrchat",
+      "description": "SlimeVR, Vive trackers, Space Calibrator, IMU drift correction.",
+      "recommendedTools": ["get_install_guide", "get_vrc_knowledge"],
+      "examples": [
+        "Install SlimeVR + Space Calibrator and explain calibration steps."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "SlimeVR is the open-source FBT tracker stack with auto-calibration. Space Calibrator aligns OpenVR-driven trackers (Vive, Tundra) with non-OpenVR (SlimeVR, Mocopi). Always calibrate playspace first, then arm/leg sync after a few frames of motion. See get_install_guide section 'FBT Stacks'."
+    },
+    {
+      "id": "vrchat-physbones",
+      "name": "VRChat PhysBones",
+      "category": "vrchat",
+      "description": "PhysBone chain setup, colliders, immobile types, allow grab/pose.",
+      "recommendedTools": ["scan_armature", "manage_component", "get_vrc_knowledge"],
+      "examples": [
+        "Add PhysBone to hair chain with stiffness 0.2, drag 0.4."
+      ],
+      "requiredPackages": ["com.vrchat.avatars"],
+      "systemPrompt": "VRC PhysBone replaces DynamicBone for VRChat. Use Pull (0.2 default), Stiffness, Drag for natural motion. Set ImmobileType=Animation for clothing that should not slide. Allow Grab + Allow Pose for interactivity. Avoid >50 PhysBone components per avatar."
+    },
+    {
+      "id": "vrchat-expression-params",
+      "name": "VRChat Expression Parameters",
+      "category": "vrchat",
+      "description": "VRCExpressionParameters budgeting, sync vs local, parameter cost.",
+      "recommendedTools": ["scan_avatar", "manage_scriptable_object"],
+      "examples": [
+        "Show current parameter budget and recommend which to unsync."
+      ],
+      "requiredPackages": ["com.vrchat.avatars"],
+      "systemPrompt": "256-bit budget. Bool=1, Int/Float=8 bits. Unsync purely cosmetic params (faceblend, BOOP, PAT). Synced params are visible to remote players. Always show current/256 and the largest synced parameters when asked to audit."
+    },
+    {
+      "id": "vrchat-upload-recipe",
+      "name": "VRChat Upload Pre-Flight",
+      "category": "vrchat",
+      "description": "One-shot pre-upload checklist: validation, optimization, params, broken refs, missing scripts.",
+      "recommendedTools": ["scan_avatar", "unity_validation", "unity_optimization", "unity_cleaner", "manage_mcp_mode"],
+      "examples": [
+        "Run the VRChat pre-flight check on the active avatar."
+      ],
+      "requiredPackages": ["com.vrchat.avatars"],
+      "systemPrompt": "Run in order: 1) scan_avatar, 2) unity_validation.audit_active_scene, 3) unity_optimization.scene_summary + oversized_textures, 4) unity_cleaner.find_internal_error_shaders, 5) report findings with severity (Block/Warn/Info). Do NOT auto-fix; ask the user to approve each remediation."
+    },
+    {
+      "id": "cinemachine",
+      "name": "Cinemachine Virtual Cameras",
+      "category": "unity-core",
+      "description": "Virtual cameras, dolly tracks, blends, follow/look-at composition.",
+      "recommendedTools": ["unity_cinemachine", "unity_camera"],
+      "examples": [
+        "Create a VCam that follows the Player with smooth damping."
+      ],
+      "requiredPackages": ["com.unity.cinemachine"],
+      "systemPrompt": "Use unity_cinemachine.detect first. Higher priority VCam wins. For follow shots, set the Body=Transposer; for orbits, FreeLook. Damping XYZ typically 0.3-1.0. Use lookAheadTime for chase cameras."
+    },
+    {
+      "id": "unity-ui",
+      "name": "Unity uGUI / UI Toolkit",
+      "category": "unity-core",
+      "description": "Responsive Canvas, anchors, layout groups, scroll view, world-space UI.",
+      "recommendedTools": ["unity_ui", "unity_event", "manage_component"],
+      "examples": [
+        "Create a settings menu with 3 buttons centered, anchored, scaled with screen."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "CanvasScaler.uiScaleMode = ScaleWithScreenSize at 1920x1080 reference is the default. Use anchors (min/max) for responsive layouts. Avoid nested LayoutGroups when not needed; use ContentSizeFitter sparingly. Each Image is one draw call unless batched."
+    },
+    {
+      "id": "unity-physics",
+      "name": "Unity Physics Basics",
+      "category": "unity-core",
+      "description": "Rigidbody, colliders, joints, layer collision matrix.",
+      "recommendedTools": ["unity_physics", "unity_debug"],
+      "examples": [
+        "Add a Rigidbody with mass 1 and box collider on the player."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "Use unity_physics for setup. Rigidbody.isKinematic=true disables physics-driven motion. Prefer primitive colliders over MeshCollider for performance. Layer collision matrix is global — use unity_physics.set_ignore_layer_collision."
+    },
+    {
+      "id": "unity-navmesh",
+      "name": "Unity NavMesh + Agents",
+      "category": "unity-core",
+      "description": "Bake nav surfaces, agents, off-mesh links.",
+      "recommendedTools": ["unity_navmesh", "manage_component"],
+      "examples": [
+        "Bake the scene NavMesh and report triangle count."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "Use unity_navmesh.bake after geometry is final. NavMeshAgent needs Radius/Height matching capsule. For dynamic obstacles use NavMeshObstacle with carve=true. Modern projects can switch to com.unity.ai.navigation package for runtime baking."
+    },
+    {
+      "id": "unity-terrain",
+      "name": "Unity Terrain",
+      "category": "unity-core",
+      "description": "Terrain creation, sculpting heights, terrain layers.",
+      "recommendedTools": ["unity_terrain", "manage_component"],
+      "examples": [
+        "Create a 500x500 flat terrain at y=0."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "Default heightmap resolution 513, alphamap 512. Flat terrains start with SetHeights to zeros. Use Terrain Layers for ground textures (tiled by tileSize)."
+    },
+    {
+      "id": "unity-timeline",
+      "name": "Unity Timeline Sequencing",
+      "category": "unity-core",
+      "description": "PlayableDirector, tracks, signals, control clips.",
+      "recommendedTools": ["unity_timeline", "manage_component"],
+      "examples": [
+        "Create a director and bind it to a timeline asset."
+      ],
+      "requiredPackages": ["com.unity.timeline"],
+      "systemPrompt": "PlayableDirector + TimelineAsset are the entry points. unity_timeline.detect first. Tracks: AnimationTrack, AudioTrack, SignalTrack, ControlTrack."
+    },
+    {
+      "id": "unity-animator",
+      "name": "Unity Animator State Machines",
+      "category": "unity-core",
+      "description": "AnimatorController layers, states, transitions, parameters.",
+      "recommendedTools": ["manage_animator", "get_asset_info"],
+      "examples": [
+        "Get current state on FX layer 0."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "Use manage_animator.get_layers / get_states / set_parameter. Float/Int/Bool/Trigger. Avoid transition Has Exit Time when responsiveness matters. Default state must exist on every layer."
+    },
+    {
+      "id": "unity-performance",
+      "name": "Unity Performance",
+      "category": "unity-core",
+      "description": "Draw call audit, batching, LOD, culling, shader cost.",
+      "recommendedTools": ["unity_profiler", "unity_optimization", "unity_smart"],
+      "examples": [
+        "Audit the scene for objects over 5000 triangles."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "Run unity_optimization.scene_summary first, then mesh_audit (threshold 5000), then texture_audit. Static batching needs StaticEditorFlags.BatchingStatic. Dynamic batching limited to <300 verts. Use unity_profiler.memory_snapshot to inspect mono heap."
+    },
+    {
+      "id": "unity-mobile",
+      "name": "Unity Mobile Optimization",
+      "category": "unity-core",
+      "description": "IL2CPP, ASTC/ETC2 compression, draw-call reduction for mobile.",
+      "recommendedTools": ["unity_build_manage", "unity_importer", "manage_texture"],
+      "examples": [
+        "Audit textures for mobile compression compliance."
+      ],
+      "requiredPackages": [],
+      "systemPrompt": "ASTC 6x6 / 8x8 for color, ETC2 for older devices. IL2CPP scripting backend, ARM64 architecture. Max texture 1024 typical. Use unity_importer to bulk-change per-platform overrides."
+    },
+    {
+      "id": "unity-testrunner",
+      "name": "Unity Test Framework / TDD",
+      "category": "unity-core",
+      "description": "EditMode/PlayMode tests, NUnit assertions, CI integration.",
+      "recommendedTools": ["run_tests", "get_test_job"],
+      "examples": [
+        "Run all EditMode tests and report failures."
+      ],
+      "requiredPackages": ["com.unity.test-framework"],
+      "systemPrompt": "Use run_tests then poll get_test_job until terminal. EditMode tests live in Editor asmdef with com.unity.test-framework reference + UnityEditor + nunit.framework + UnityEngine.TestRunner. PlayMode tests need [UnityTest] attribute returning IEnumerator."
+    },
+    {
+      "id": "csharp-pro",
+      "name": "Modern C# Patterns",
+      "category": "instruction",
+      "description": "Records, pattern matching, Span<T>, value tuples, SOLID.",
+      "recommendedTools": ["manage_script", "validate_script", "inspect_type"],
+      "examples": [],
+      "requiredPackages": [],
+      "systemPrompt": "Target C# 9.0+. Use records for immutable DTOs, init-only setters, switch expressions, pattern matching. Avoid LINQ in hot paths. Prefer Span<T>/Memory<T> for buffers. Apply Single Responsibility per class."
+    },
+    {
+      "id": "unity-async",
+      "name": "Unity Async / Main-Thread Rules",
+      "category": "instruction",
+      "description": "Coroutines vs Tasks, CancellationToken, Unity API main-thread constraint.",
+      "recommendedTools": ["manage_script", "execute_csharp"],
+      "examples": [],
+      "requiredPackages": [],
+      "systemPrompt": "Unity API calls MUST run on the main thread. Use awaitable Tasks with await Task.Yield() to resume on main thread in Unity 2023+. Otherwise use coroutines or UniTask. ALWAYS pass a CancellationToken. Never async void unless required by event handler."
+    },
+    {
+      "id": "unity-collection-pool",
+      "name": "Zero-GC Collections",
+      "category": "instruction",
+      "description": "ListPool, DictionaryPool, HashSetPool, ArrayPool patterns.",
+      "recommendedTools": ["manage_script"],
+      "examples": [],
+      "requiredPackages": [],
+      "systemPrompt": "Use UnityEngine.Pool.ListPool<T>.Get() / Release() to eliminate GC allocations in Update/FixedUpdate. ArrayPool<T>.Shared for byte buffers. Reuse Material/MaterialPropertyBlock to avoid renderer.material allocations."
+    }
+  ]
+}

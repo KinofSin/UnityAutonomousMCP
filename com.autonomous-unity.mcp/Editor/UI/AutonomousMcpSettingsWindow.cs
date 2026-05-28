@@ -5,6 +5,7 @@ using System.Linq;
 using System.Runtime.InteropServices;
 using System.Text;
 using AutonomousMcp.Editor.Core;
+using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
 
@@ -15,12 +16,14 @@ namespace AutonomousMcp.Editor.UI
         private const string TabPrefKey = "AutonomousMcp.UI.SelectedTab";
         private const string FoldoutPrefPrefix = "AutonomousMcp.UI.Tools.Foldout.";
 
-        private static readonly string[] TabLabels = { "Server", "Tools", "Logs", "Integrations", "Clients" };
+        private static readonly string[] TabLabels = { "Server", "Tools", "Logs", "Integrations", "Clients", "Checkpoints", "Generators", "Skills" };
 
         private static AutonomousMcpConnection ConnectionSingleton => AutonomousMcpConnection.Current;
 
         private AutonomousMcpSettings _settings;
         private Vector2 _toolsScroll, _logsScroll, _integrationsScroll, _clientsScroll;
+        private Vector2 _checkpointsScroll, _generatorsScroll, _skillsScroll;
+        private string _skillFilter = string.Empty;
         private int _selectedTab;
         private double _lastRepaintTime;
 
@@ -68,6 +71,9 @@ namespace AutonomousMcp.Editor.UI
                 case 2: DrawLogsTab(); break;
                 case 3: DrawIntegrationsTab(); break;
                 case 4: DrawClientsTab(); break;
+                case 5: DrawCheckpointsTab(); break;
+                case 6: DrawGeneratorsTab(); break;
+                case 7: DrawSkillsTab(); break;
             }
         }
 
@@ -456,6 +462,153 @@ namespace AutonomousMcp.Editor.UI
                 case "pending":
                 default: return new Color(1.0f, 0.65f, 0.0f);
             }
+        }
+
+        // ───────── Checkpoints tab ─────────
+
+        private void DrawCheckpointsTab()
+        {
+            var list = CheckpointStore.List();
+            var totalKb = CheckpointStore.TotalDiskUsageBytes() / 1024.0;
+            EditorGUILayout.LabelField($"{list.Count} stored · {totalKb:0.#} KB total", EditorStyles.boldLabel);
+
+            using (new EditorGUILayout.HorizontalScope())
+            {
+                if (GUILayout.Button("Refresh", GUILayout.Width(90))) Repaint();
+                if (GUILayout.Button("Open folder", GUILayout.Width(110)))
+                    EditorUtility.RevealInFinder(CheckpointStore.RootDirectory);
+                if (GUILayout.Button("Delete all", GUILayout.Width(90)) &&
+                    EditorUtility.DisplayDialog("Delete all checkpoints?", "Remove every saved checkpoint?", "Delete", "Cancel"))
+                    CheckpointStore.DeleteAll();
+                GUILayout.FlexibleSpace();
+            }
+            EditorGUILayout.Space(4);
+
+            _checkpointsScroll = EditorGUILayout.BeginScrollView(_checkpointsScroll);
+            foreach (var cp in list)
+            {
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    EditorGUILayout.LabelField($"{cp.id}  ·  {cp.label}", EditorStyles.miniBoldLabel);
+                    var kb = CheckpointStore.SizeOf(cp.id) / 1024.0;
+                    var scene = string.IsNullOrEmpty(cp.activeScenePath) ? "(none)" : cp.activeScenePath;
+                    EditorGUILayout.LabelField($"{ShortTimestamp(cp.createdUtc)} · {kb:0.#} KB · scene={scene}", EditorStyles.miniLabel);
+                    using (new EditorGUILayout.HorizontalScope())
+                    {
+                        if (GUILayout.Button("Restore", EditorStyles.miniButton, GUILayout.Width(70)) &&
+                            EditorUtility.DisplayDialog($"Restore {cp.id}?", "Replace current scene with checkpoint?", "Restore", "Cancel"))
+                        {
+                            if (!CheckpointStore.Restore(cp.id, out var err))
+                                Debug.LogError($"[AutonomousMCP] Restore failed: {err}");
+                        }
+                        if (GUILayout.Button("Diff", EditorStyles.miniButton, GUILayout.Width(60)))
+                            Debug.Log(CheckpointStore.Diff(cp.id));
+                        if (GUILayout.Button("Delete", EditorStyles.miniButton, GUILayout.Width(70)))
+                        {
+                            if (!CheckpointStore.Delete(cp.id, out var err))
+                                Debug.LogError($"[AutonomousMCP] Delete failed: {err}");
+                        }
+                    }
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
+        // ───────── Generators tab ─────────
+
+        private void DrawGeneratorsTab()
+        {
+            EditorGUILayout.HelpBox(
+                "Stub providers ship for every kind. API keys are read from GENERATOR_* env vars at request time, never stored.",
+                MessageType.Info);
+
+            var data = GeneratorConfig.Data;
+            var newOut = EditorGUILayout.TextField("Default output dir", data.defaultOutputDirectory);
+            if (newOut != data.defaultOutputDirectory && newOut.StartsWith("Assets/", StringComparison.Ordinal))
+            {
+                data.defaultOutputDirectory = newOut.TrimEnd('/');
+                GeneratorConfig.Save();
+            }
+
+            EditorGUILayout.Space(2);
+            EditorGUILayout.LabelField("Environment detection", EditorStyles.boldLabel);
+            using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+            {
+                foreach (var n in new[] { "GENERATOR_API_KEY", "GENERATOR_OPENAI_API_KEY", "GENERATOR_ANTHROPIC_API_KEY", "GENERATOR_LOCAL_LLM_URL" })
+                {
+                    var present = !string.IsNullOrEmpty(Environment.GetEnvironmentVariable(n));
+                    EditorGUILayout.LabelField($"{n}: {(present ? "set" : "(missing)")}", EditorStyles.miniLabel);
+                }
+            }
+
+            EditorGUILayout.Space(2);
+            EditorGUILayout.LabelField($"Registered generators: {GeneratorRegistry.Count}", EditorStyles.boldLabel);
+            _generatorsScroll = EditorGUILayout.BeginScrollView(_generatorsScroll);
+            foreach (var g in GeneratorRegistry.List())
+            {
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    EditorGUILayout.LabelField($"{g.Kind} · {g.ProviderId}", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.LabelField($"{(g.IsConfigured() ? "ready" : "not configured")} — {Truncate(g.GetStatus(), 140)}", EditorStyles.miniLabel);
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
+        // ───────── Skills tab ─────────
+
+        private void DrawSkillsTab()
+        {
+            _skillFilter = EditorGUILayout.TextField("Filter", _skillFilter);
+
+            var path = ResolveSkillsIndexPath();
+            if (string.IsNullOrEmpty(path))
+            {
+                EditorGUILayout.HelpBox("Skills/index.json not found in the package.", MessageType.Warning);
+                return;
+            }
+
+            JArray skills;
+            try { skills = (JArray)JObject.Parse(File.ReadAllText(path))["skills"]; }
+            catch (Exception e) { EditorGUILayout.HelpBox($"Parse error: {e.Message}", MessageType.Error); return; }
+            if (skills == null) { EditorGUILayout.HelpBox("No 'skills' array in index.json.", MessageType.Warning); return; }
+
+            EditorGUILayout.LabelField($"{skills.Count} skills", EditorStyles.boldLabel);
+            _skillsScroll = EditorGUILayout.BeginScrollView(_skillsScroll);
+            foreach (var s in skills)
+            {
+                var id = (string)s["id"];
+                var name = (string)s["name"];
+                if (!string.IsNullOrEmpty(_skillFilter) &&
+                    (id ?? string.Empty).IndexOf(_skillFilter, StringComparison.OrdinalIgnoreCase) < 0 &&
+                    (name ?? string.Empty).IndexOf(_skillFilter, StringComparison.OrdinalIgnoreCase) < 0)
+                    continue;
+
+                using (new EditorGUILayout.VerticalScope(EditorStyles.helpBox))
+                {
+                    EditorGUILayout.LabelField($"{id} — {name}", EditorStyles.miniBoldLabel);
+                    EditorGUILayout.LabelField($"category: {(string)s["category"]}", EditorStyles.miniLabel);
+                    EditorGUILayout.LabelField(Truncate((string)s["description"], 160), EditorStyles.wordWrappedMiniLabel);
+                }
+            }
+            EditorGUILayout.EndScrollView();
+        }
+
+        private static string ResolveSkillsIndexPath()
+        {
+            var projectRoot = Path.GetDirectoryName(Application.dataPath) ?? string.Empty;
+            var candidates = new[]
+            {
+                Path.Combine(projectRoot, "Packages", "com.autonomous-unity.mcp", "Skills", "index.json"),
+                Path.Combine(projectRoot, "..", "com.autonomous-unity.mcp", "Skills", "index.json"),
+                Path.Combine(projectRoot, "com.autonomous-unity.mcp", "Skills", "index.json"),
+            };
+            foreach (var c in candidates)
+            {
+                try { var full = Path.GetFullPath(c); if (File.Exists(full)) return full; }
+                catch { /* ignore */ }
+            }
+            return string.Empty;
         }
     }
 }
