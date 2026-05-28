@@ -406,6 +406,12 @@ namespace AutonomousMcp.Editor.UI
             PermissionStore.AutoApproveNewClients = EditorGUILayout.ToggleLeft(
                 "Auto-approve new clients",
                 PermissionStore.AutoApproveNewClients);
+            PermissionStore.AutoApproveMutate = EditorGUILayout.ToggleLeft(
+                "Auto-approve Mutate tools (requires Agent mode)",
+                PermissionStore.AutoApproveMutate);
+            PermissionStore.AutoApproveDestructive = EditorGUILayout.ToggleLeft(
+                "Auto-approve Destructive tools (dangerous)",
+                PermissionStore.AutoApproveDestructive);
 
             EditorGUILayout.Space(4);
 
