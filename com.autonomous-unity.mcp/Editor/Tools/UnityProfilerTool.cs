@@ -1,7 +1,6 @@
 using System.Collections.Generic;
 using AutonomousMcp.Editor.Core;
 using Newtonsoft.Json.Linq;
-using Unity.Profiling;
 using UnityEditor;
 using UnityEngine;
 using UnityEngine.Profiling;
