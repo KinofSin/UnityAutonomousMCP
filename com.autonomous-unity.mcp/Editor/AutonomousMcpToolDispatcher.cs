@@ -4652,17 +4652,17 @@ public static class __McpEval
             {
                 case AutonomousMcp.Editor.Core.PermissionDecision.DenyByMode:
                     reason = $"Server is in Ask mode; tool '{toolName}' is {toolMode}. " +
-                             "Switch to Agent mode in Project Settings > Autonomous MCP.";
+                             "Switch to Agent mode in Window > Autonomous MCP > Settings.";
                     break;
                 case AutonomousMcp.Editor.Core.PermissionDecision.DenyByPolicy:
                     reason = $"Tool '{toolName}' is denied by an explicit policy override.";
                     break;
                 case AutonomousMcp.Editor.Core.PermissionDecision.RequiresApproval:
                     reason = $"Tool '{toolName}' ({toolMode}) requires approval. " +
-                             "Approve it in Project Settings > Autonomous MCP, or set autoApproveMutate / autoApproveDestructive.";
+                             "Approve it in Window > Autonomous MCP > Settings, or set autoApproveMutate / autoApproveDestructive.";
                     break;
                 case AutonomousMcp.Editor.Core.PermissionDecision.DenyClientNotApproved:
-                    reason = $"Client is not approved. Approve it in Project Settings > Autonomous MCP.";
+                    reason = $"Client is not approved. Approve it in Window > Autonomous MCP > Settings.";
                     break;
                 default:
                     reason = $"Tool '{toolName}' denied.";
