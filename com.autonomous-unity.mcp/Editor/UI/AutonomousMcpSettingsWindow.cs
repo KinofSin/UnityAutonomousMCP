@@ -145,14 +145,23 @@ namespace AutonomousMcp.Editor.UI
             var byCategory = new Dictionary<string, List<(string name, string mode, string description, string source)>>();
             foreach (var entry in ToolRegistry.All())
             {
-                var bucket = byCategory.TryGetValue(entry.Category.ToString(), out var list) ? list : (byCategory[entry.Category.ToString()] = new List<(string, string, string, string)>());
-                bucket.Add((entry.Name, entry.Mode.ToString(), entry.Description ?? string.Empty, "registry"));
+                var key = entry.Category.ToString();
+                if (!byCategory.TryGetValue(key, out var list))
+                {
+                    list = new List<(string name, string mode, string description, string source)>();
+                    byCategory[key] = list;
+                }
+                list.Add((entry.Name, entry.Mode.ToString(), entry.Description ?? string.Empty, "registry"));
             }
             foreach (var legacy in AutonomousMcpToolDispatcher.LegacyToolNames)
             {
                 const string legacyCat = "Editor";
-                var bucket = byCategory.TryGetValue(legacyCat, out var list) ? list : (byCategory[legacyCat] = new List<(string, string, string, string)>());
-                bucket.Add((legacy, "Mutate", string.Empty, "legacy_switch"));
+                if (!byCategory.TryGetValue(legacyCat, out var list))
+                {
+                    list = new List<(string name, string mode, string description, string source)>();
+                    byCategory[legacyCat] = list;
+                }
+                list.Add((legacy, "Mutate", string.Empty, "legacy_switch"));
             }
 
             foreach (var category in byCategory.Keys.OrderBy(c => c, StringComparer.Ordinal))
