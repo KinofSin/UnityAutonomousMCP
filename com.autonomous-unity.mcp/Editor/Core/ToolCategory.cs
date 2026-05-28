@@ -11,6 +11,20 @@ namespace AutonomousMcp.Editor.Core
         Vrchat,
         Test,
         Custom,
-        Diagnostic
+        Diagnostic,
+        // Appended for ported Phase 2–7 tool families (additive — existing values keep ordinals):
+        UI,
+        Physics,
+        Navigation,
+        Terrain,
+        Timeline,
+        Cinemachine,
+        Lighting,
+        Camera,
+        Workflow,
+        Checkpoint,
+        Generator,
+        Build,
+        Profiler
     }
 }

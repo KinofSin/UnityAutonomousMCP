@@ -63,6 +63,15 @@ namespace AutonomousMcp.Editor.Core
             }
         }
 
+        /// <summary>
+        /// Convenience overload for delegate-form tools (the ported Unity*Tool families and
+        /// CheckpointTool/ManageGeneratorTool register this way from their [InitializeOnLoadMethod]).
+        /// Wraps the args into a RegistryEntry. Last write wins.
+        /// </summary>
+        public static void Register(string name, ToolMode mode, ToolCategory category,
+            string description, Func<JObject, AutonomousMcpToolResponse> handler)
+            => Register(new RegistryEntry(name, description, mode, category, handler));
+
         public static IReadOnlyList<RegistryEntry> All()
         {
             lock (Gate)
