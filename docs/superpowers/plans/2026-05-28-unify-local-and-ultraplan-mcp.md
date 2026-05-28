@@ -746,3 +746,23 @@ High-risk family static API checks (Unity 6 vs 2022.3):
 - `unity_importer` — ⏳ 1 FindProperty call; confirm path resolves at runtime in the editor.
 
 **Remaining (require live Unity 2022.3.22f1 — user-run):** Task 6 compile gate, Task 12/13 runtime smokes per family, Task 14 MCP round-trip + Settings-window walkthrough, then `git push -u private feat/unified-mcp` after the private remote is set up.
+
+---
+
+## Live runtime validation results (over HTTP bridge, Unity 2022.3.22f1, project: Leaf)
+
+Import fix verified: domain reload 41.6s -> 0.9s; GUID conflicts 23,362 -> 0; 0 compile errors.
+First-compile fixes applied (5): dispatcher crunchedCompression x2, dispatcher !IndexOf precedence,
+UnityNavMeshTool NavMeshBuilder qualify, UnityTimelineTool Object qualify.
+
+Tool execution (live):
+- Read tools: unity_validation, unity_optimization (mesh_audit found LEAF/Body >5k tris),
+  unity_profiler (frame_timing fps real), unity_debug (count_objects 572), unity_perception,
+  unity_smart (input validation) — all execute.
+- Mutate tools (Agent mode + autoApproveMutate, read-only actions): unity_navmesh info,
+  unity_timeline list_directors, manage_checkpoint list, manage_generator list (8 stubs) — all OK;
+  unity_cinemachine gracefully reports package not installed (reflection guard works).
+Governance fully validated: Ask-mode mode-gate, unapproved-client gate, Agent-mode mutate-approval gate.
+list_tools_with_metadata returns 62 tools incl. all 21 ported.
+
+Remaining: Settings-window visual tab walk (user); private-remote setup + push (deferred).
