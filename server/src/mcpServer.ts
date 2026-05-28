@@ -1,11 +1,14 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { SSEServerTransport } from "@modelcontextprotocol/sdk/server/sse.js";
+import { createServer as createHttpServer } from "node:http";
 import { z } from "zod";
 import { runAutonomousGoal } from "./orchestrator.js";
 import { createUnityBridgeFromEnv } from "./unityBridge.js";
 import { TOOL_CAPABILITIES } from "./capabilityCatalog.js";
 import { queryKnowledgeBase } from "./vrcKnowledgeBase.js";
 import { queryInstallGuide } from "./vrcInstallGuide.js";
+import { listSkills, findSkill, invokeSkill, type Skill } from "./skills.js";
 
 const bridge = createUnityBridgeFromEnv();
 
@@ -33,12 +36,62 @@ const zVector3 = z.object({
   z: z.number().optional(),
 }).optional();
 
-export async function startMcpServer(): Promise<void> {
+function buildServer(): McpServer {
   const server = new McpServer({
     name: "unity-autonomous-agent",
-    version: "0.2.0"
+    version: "0.3.0"
   });
 
+  registerAllTools(server);
+  return server;
+}
+
+export async function startMcpServer(): Promise<void> {
+  const server = buildServer();
+  const transport = new StdioServerTransport();
+  await server.connect(transport);
+}
+
+export async function startMcpSseServer(port: number): Promise<void> {
+  // One SSE session per HTTP GET /sse, message ingestion via POST /messages.
+  // Multiple concurrent clients supported via session id query param.
+  const sessions = new Map<string, { server: McpServer; transport: SSEServerTransport }>();
+
+  const httpServer = createHttpServer(async (req, res) => {
+    if (!req.url) { res.writeHead(400).end(); return; }
+    const url = new URL(req.url, `http://${req.headers.host}`);
+
+    if (req.method === "GET" && url.pathname === "/sse") {
+      const server = buildServer();
+      const transport = new SSEServerTransport("/messages", res);
+      sessions.set(transport.sessionId, { server, transport });
+      res.on("close", () => { sessions.delete(transport.sessionId); });
+      await server.connect(transport);
+      return;
+    }
+
+    if (req.method === "POST" && url.pathname === "/messages") {
+      const sessionId = url.searchParams.get("sessionId") ?? "";
+      const session = sessions.get(sessionId);
+      if (!session) { res.writeHead(404).end("Unknown session"); return; }
+      await session.transport.handlePostMessage(req, res);
+      return;
+    }
+
+    if (req.method === "GET" && url.pathname === "/health") {
+      res.writeHead(200, { "Content-Type": "application/json" });
+      res.end(JSON.stringify({ ok: true, sessions: sessions.size }));
+      return;
+    }
+
+    res.writeHead(404).end();
+  });
+
+  await new Promise<void>((resolve) => httpServer.listen(port, () => resolve()));
+  process.stderr.write(`[autonomous-mcp] SSE listening on http://127.0.0.1:${port}/sse (POST /messages?sessionId=...)\n`);
+}
+
+function registerAllTools(server: McpServer): void {
   // ── Meta tools ──
 
   server.tool(
@@ -612,6 +665,565 @@ export async function startMcpServer(): Promise<void> {
     async (input) => callUnity("batch_execute", { calls: input.calls })
   );
 
+  // ── Phase 4: New tool families ──
+
+  server.tool(
+    "unity_validation",
+    "Project + scene audit. Actions: missing_scripts, broken_refs, duplicate_names, empty_renderers, missing_textures_on_materials, audit_active_scene.",
+    {
+      action: z.enum([
+        "missing_scripts", "broken_refs", "duplicate_names",
+        "empty_renderers", "missing_textures_on_materials", "audit_active_scene"
+      ]).describe("Validation action"),
+      include_inactive: z.boolean().optional(),
+      folder: z.string().optional(),
+    },
+    async (input) => callUnity("unity_validation", input)
+  );
+
+  server.tool(
+    "unity_cleaner",
+    "Find/remove orphan assets, unused materials, empty folders, internal-error-shader materials. Delete actions require confirm=true.",
+    {
+      action: z.enum([
+        "find_orphans", "find_unused_materials", "find_empty_folders",
+        "find_internal_error_shaders", "delete_orphans", "delete_empty_folders"
+      ]).describe("Cleaner action"),
+      folder: z.string().optional().describe("Restrict scope to a folder (default Assets)"),
+      confirm: z.boolean().optional().describe("Required true for delete actions"),
+    },
+    async (input) => callUnity("unity_cleaner", input)
+  );
+
+  server.tool(
+    "unity_optimization",
+    "Mesh + texture + draw-call audit. Actions: mesh_audit, texture_audit, draw_call_estimate, scene_summary, oversized_textures.",
+    {
+      action: z.enum(["mesh_audit", "texture_audit", "draw_call_estimate", "scene_summary", "oversized_textures"]),
+      triangle_threshold: z.number().int().optional().describe("Triangles threshold for mesh_audit"),
+      max_size: z.number().int().optional().describe("Max texture size for oversized_textures"),
+      folder: z.string().optional(),
+    },
+    async (input) => callUnity("unity_optimization", input)
+  );
+
+  server.tool(
+    "unity_profiler",
+    "Profiler samplers + memory + frame timing. Actions: read_sampler, frame_timing, memory_snapshot, list_recorders.",
+    {
+      action: z.enum(["read_sampler", "frame_timing", "memory_snapshot", "list_recorders"]),
+      name: z.string().optional().describe("Sampler name for read_sampler (e.g. 'Camera.Render')"),
+    },
+    async (input) => callUnity("unity_profiler", input)
+  );
+
+  server.tool(
+    "unity_debug",
+    "Diagnostic queries. Actions: count_objects, find_null_components, active_camera, layer_collision_matrix, render_pipeline.",
+    {
+      action: z.enum(["count_objects", "find_null_components", "active_camera", "layer_collision_matrix", "render_pipeline"]),
+    },
+    async (input) => callUnity("unity_debug", input)
+  );
+
+  server.tool(
+    "unity_importer",
+    "Generic AssetImporter SerializedProperty editor. Actions: get_properties, set_property, get_importer_type.",
+    {
+      action: z.enum(["get_properties", "set_property", "get_importer_type"]),
+      asset_path: z.string().describe("Asset path (e.g. 'Assets/Textures/x.png')"),
+      property_path: z.string().optional(),
+      prefix: z.string().optional(),
+      value: z.unknown().optional(),
+    },
+    async (input) => callUnity("unity_importer", input)
+  );
+
+  server.tool(
+    "unity_build_manage",
+    "Build settings + scripting defines. Actions: get_defines, set_defines, add_define, remove_define, get_target, switch_target, list_targets, get_scenes.",
+    {
+      action: z.enum([
+        "get_defines", "set_defines", "add_define", "remove_define",
+        "get_target", "switch_target", "list_targets", "get_scenes"
+      ]),
+      define: z.string().optional(),
+      defines: z.array(z.string()).optional(),
+      target: z.string().optional(),
+    },
+    async (input) => callUnity("unity_build_manage", input)
+  );
+
+  server.tool(
+    "unity_ui",
+    "uGUI scaffolding. Actions: create_canvas, create_panel, create_button, create_text, create_image, set_anchor, set_rect.",
+    {
+      action: z.enum(["create_canvas", "create_panel", "create_button", "create_text", "create_image", "set_anchor", "set_rect"]),
+      name: z.string().optional(),
+      parent: z.string().optional(),
+      label: z.string().optional(),
+      text: z.string().optional(),
+      instanceId: z.number().int().optional(),
+      min_x: z.number().optional(), min_y: z.number().optional(),
+      max_x: z.number().optional(), max_y: z.number().optional(),
+      sizeDelta: z.object({ x: z.number(), y: z.number() }).optional(),
+      anchoredPosition: z.object({ x: z.number(), y: z.number() }).optional(),
+    },
+    async (input) => callUnity("unity_ui", input)
+  );
+
+  server.tool(
+    "unity_physics",
+    "Physics scaffolding. Actions: add_rigidbody, add_collider, set_gravity, get_gravity, set_ignore_layer_collision, get_physics_settings.",
+    {
+      action: z.enum(["add_rigidbody", "add_collider", "set_gravity", "get_gravity", "set_ignore_layer_collision", "get_physics_settings"]),
+      name: z.string().optional(),
+      instanceId: z.number().int().optional(),
+      type: z.string().optional().describe("Collider type: box|sphere|capsule|mesh"),
+      mass: z.number().optional(),
+      use_gravity: z.boolean().optional(),
+      is_kinematic: z.boolean().optional(),
+      is_trigger: z.boolean().optional(),
+      gravity: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+      layer_a: z.number().int().optional(),
+      layer_b: z.number().int().optional(),
+      ignore: z.boolean().optional(),
+    },
+    async (input) => callUnity("unity_physics", input)
+  );
+
+  server.tool(
+    "unity_navmesh",
+    "NavMesh actions: bake, clear, info, list_agent_types.",
+    {
+      action: z.enum(["bake", "clear", "info", "list_agent_types"]),
+    },
+    async (input) => callUnity("unity_navmesh", input)
+  );
+
+  server.tool(
+    "unity_terrain",
+    "Terrain actions: list, info, create, set_height, flatten.",
+    {
+      action: z.enum(["list", "info", "create", "set_height", "flatten"]),
+      name: z.string().optional(),
+      asset_path: z.string().optional(),
+      height: z.number().optional(),
+      heightmap_resolution: z.number().int().optional(),
+      alphamap_resolution: z.number().int().optional(),
+      size: z.object({ x: z.number(), y: z.number(), z: z.number() }).optional(),
+    },
+    async (input) => callUnity("unity_terrain", input)
+  );
+
+  server.tool(
+    "unity_lighting",
+    "Lighting management. Actions: list_lights, create_light, set_ambient, get_ambient, set_skybox, get_skybox.",
+    {
+      action: z.enum(["list_lights", "create_light", "set_ambient", "get_ambient", "set_skybox", "get_skybox"]),
+      name: z.string().optional(),
+      type: z.string().optional().describe("Light type: Directional, Point, Spot, Area"),
+      intensity: z.number().optional(),
+      range: z.number().optional(),
+      color: z.object({ r: z.number(), g: z.number(), b: z.number(), a: z.number() }).optional(),
+      material_path: z.string().optional(),
+    },
+    async (input) => callUnity("unity_lighting", input)
+  );
+
+  server.tool(
+    "unity_camera",
+    "Camera + SceneView. Actions: list, create, sceneview_focus, sceneview_pose, sceneview_align_with_view.",
+    {
+      action: z.enum(["list", "create", "sceneview_focus", "sceneview_pose", "sceneview_align_with_view"]),
+      name: z.string().optional(),
+      camera: z.string().optional(),
+      fov: z.number().optional(),
+      tag_main: z.boolean().optional(),
+    },
+    async (input) => callUnity("unity_camera", input)
+  );
+
+  server.tool(
+    "unity_event",
+    "UnityEvent persistent listeners (e.g. Button.onClick). Actions: list_persistent, add_persistent, remove_persistent.",
+    {
+      action: z.enum(["list_persistent", "add_persistent", "remove_persistent"]),
+      source: z.string().describe("GameObject hosting the event"),
+      event_field: z.string().describe("Event field name (e.g. 'onClick')"),
+      component_type: z.string().optional(),
+      target_object: z.string().optional(),
+      target_component_type: z.string().optional(),
+      method_name: z.string().optional(),
+      index: z.number().int().optional(),
+    },
+    async (input) => callUnity("unity_event", input)
+  );
+
+  server.tool(
+    "unity_cinemachine",
+    "Cinemachine helpers (reflection-based; works without package, returns 'not installed'). Actions: detect, list_vcams, create_vcam, set_priority.",
+    {
+      action: z.enum(["detect", "list_vcams", "create_vcam", "set_priority"]),
+      name: z.string().optional(),
+      priority: z.number().int().optional(),
+    },
+    async (input) => callUnity("unity_cinemachine", input)
+  );
+
+  server.tool(
+    "unity_timeline",
+    "Timeline helpers (reflection-based). Actions: detect, list_directors, create_director, bind_timeline_asset.",
+    {
+      action: z.enum(["detect", "list_directors", "create_director", "bind_timeline_asset"]),
+      name: z.string().optional(),
+      asset_path: z.string().optional(),
+    },
+    async (input) => callUnity("unity_timeline", input)
+  );
+
+  server.tool(
+    "unity_smart",
+    "High-level predicate queries. Actions: meshes_over_tris, renderers_with_shader, objects_with_component, materials_using_texture, find_in_layer.",
+    {
+      action: z.enum(["meshes_over_tris", "renderers_with_shader", "objects_with_component", "materials_using_texture", "find_in_layer"]),
+      min_tris: z.number().int().optional(),
+      shader: z.string().optional(),
+      component_type: z.string().optional(),
+      texture_path: z.string().optional(),
+      layer: z.string().optional(),
+      folder: z.string().optional(),
+    },
+    async (input) => callUnity("unity_smart", input)
+  );
+
+  server.tool(
+    "unity_perception",
+    "One-shot world snapshot for AI context. Actions: snapshot, scene_digest, project_digest.",
+    {
+      action: z.enum(["snapshot", "scene_digest", "project_digest"]).optional(),
+      hierarchy_depth: z.number().int().optional(),
+    },
+    async (input) => callUnity("unity_perception", input)
+  );
+
+  server.tool(
+    "unity_workflow",
+    "Workflow recordings under Library/MCP_Workflows. Actions: list, save, load, delete, append_step, replay.",
+    {
+      action: z.enum(["list", "save", "load", "delete", "append_step", "replay"]),
+      name: z.string().optional(),
+      description: z.string().optional(),
+      tool: z.string().optional(),
+      params: z.record(z.unknown()).optional(),
+      note: z.string().optional(),
+      steps: z.array(z.object({
+        tool: z.string(),
+        params: z.record(z.unknown()).optional(),
+        note: z.string().optional(),
+      })).optional(),
+    },
+    async (input) => callUnity("unity_workflow", input)
+  );
+
+  // ── Phase 2: Checkpoint tool ──
+
+  server.tool(
+    "manage_checkpoint",
+    "Scene/asset checkpoints stored under Library/MCP_Checkpoints. Actions: create, list, get, restore, diff, delete, delete_all, disk_usage.",
+    {
+      action: z.enum(["create", "list", "get", "restore", "diff", "delete", "delete_all", "disk_usage"])
+        .describe("Checkpoint action"),
+      id: z.string().optional().describe("Checkpoint id (required for get/restore/diff/delete)"),
+      label: z.string().optional().describe("Human-readable label for create"),
+      trigger: z.string().optional().describe("Tool name that triggered the checkpoint"),
+      clientId: z.string().optional().describe("Client id that triggered the checkpoint"),
+    },
+    async (input) => callUnity("manage_checkpoint", input)
+  );
+
+  // ── Phase 7: Generators (pluggable IGenerator scaffold) ──
+
+  server.tool(
+    "manage_generator",
+    "Pluggable asset generator surface (sprite/texture/material/cubemap/audio/animation/model/terrain_layer). " +
+      "Stubs ship by default; drop real IGenerator implementations under Editor/Generators/. " +
+      "Actions: list, generate, get_config, set_provider, set_output_dir.",
+    {
+      action: z.enum(["list", "generate", "get_config", "set_provider", "set_output_dir"])
+        .describe("Generator action"),
+      kind: z.string().optional().describe("Generator kind: sprite | texture | material | cubemap | audio | animation | model | terrain_layer"),
+      prompt: z.string().optional().describe("Generation prompt (required for generate)"),
+      provider: z.string().optional().describe("Provider override (e.g. 'openai-dalle3'); falls back to GeneratorConfig"),
+      outputAssetPath: z.string().optional().describe("Target asset path; defaults to <defaultOutputDirectory>/<kind>_<timestamp>"),
+      options: z.record(z.unknown()).optional().describe("Provider-specific options bag"),
+      path: z.string().optional().describe("New default output directory (must start with 'Assets/'); used by set_output_dir"),
+    },
+    async (input) => callUnity("manage_generator", input)
+  );
+
+  // ── Phase 1: Server governance tools ──
+
+  server.tool(
+    "manage_mcp_mode",
+    "Get or set the server-wide operating mode (Ask = read-only, Agent = full). Actions: get, set_ask, set_agent.",
+    {
+      action: z.enum(["get", "set_ask", "set_agent"]).describe("Mode action"),
+    },
+    async (input) => callUnity("manage_mcp_mode", input)
+  );
+
+  server.tool(
+    "manage_mcp_clients",
+    "Inspect/approve/deny/revoke MCP clients tracked by the Unity bridge. Actions: list, get, approve, deny, revoke, set_tool_override.",
+    {
+      action: z.enum(["list", "get", "approve", "deny", "revoke", "set_tool_override"])
+        .describe("Client action"),
+      clientId: z.string().optional().describe("Client identifier"),
+      tool: z.string().optional().describe("Tool name for set_tool_override"),
+      value: z.string().optional().describe("Override value: allow, deny, ask, default"),
+    },
+    async (input) => callUnity("manage_mcp_clients", input)
+  );
+
+  server.tool(
+    "manage_mcp_permissions",
+    "Manage permission auto-approve flags + global per-tool overrides. Actions: get, set_auto_approve_mutate, set_auto_approve_destructive, set_auto_approve_new_clients, set_global_tool_override.",
+    {
+      action: z.enum([
+        "get",
+        "set_auto_approve_mutate",
+        "set_auto_approve_destructive",
+        "set_auto_approve_new_clients",
+        "set_global_tool_override",
+      ]).describe("Permission action"),
+      value: z.union([z.boolean(), z.string()]).optional().describe("Value (bool for auto-approve flags, string for tool override)"),
+      tool: z.string().optional().describe("Tool name for set_global_tool_override"),
+    },
+    async (input) => callUnity("manage_mcp_permissions", input)
+  );
+
+  server.tool(
+    "list_tools_with_metadata",
+    "List every Unity-side tool with full metadata: mode (read/mutate/destructive), category, description, implementation type. Supersedes list_capabilities for runtime discovery.",
+    {
+      filter: z.string().optional().describe("Substring filter on tool name"),
+      category: z.string().optional().describe("Filter by ToolCategory name (e.g. 'Vrchat', 'Asset', 'Editor')"),
+    },
+    async (input) => callUnity("list_tools_with_metadata", input)
+  );
+
+  // ── Phase 3: Skills ──
+
+  server.tool(
+    "list_skills",
+    "List all available expert skills (VRChat avatar, VRCFury, Modular Avatar, Poiyomi, Cinemachine, UI, physics, performance, mobile, etc.). Filter by category or free-text search.",
+    {
+      category: z.string().optional().describe("Filter by category (e.g. 'vrchat', 'unity-core', 'instruction')"),
+      search: z.string().optional().describe("Free-text search across id/name/description/prompt"),
+    },
+    async (input) => {
+      const skills = listSkills(input);
+      return toTextResult({
+        count: skills.length,
+        skills: skills.map((s: Skill) => ({
+          id: s.id,
+          name: s.name,
+          category: s.category,
+          description: s.description,
+          recommendedTools: s.recommendedTools,
+          requiredPackages: s.requiredPackages,
+        })),
+      });
+    }
+  );
+
+  server.tool(
+    "invoke_skill",
+    "Activate a skill: returns its system prompt + recommended tools + examples for the AI to follow. Use list_skills to discover ids.",
+    {
+      id: z.string().min(1).describe("Skill id (e.g. 'vrchat-avatar', 'vrchat-upload-recipe', 'cinemachine')"),
+    },
+    async (input) => {
+      const result = invokeSkill(input.id);
+      if (!result.ok) {
+        return { content: [{ type: "text" as const, text: result.error }], isError: true };
+      }
+      return {
+        content: [{ type: "text" as const, text: result.inject }],
+      };
+    }
+  );
+
+  server.tool(
+    "get_skill",
+    "Fetch the full JSON definition of a skill (system prompt, recommendedTools, examples, requiredPackages).",
+    {
+      id: z.string().min(1).describe("Skill id"),
+    },
+    async (input) => {
+      const skill = findSkill(input.id);
+      if (!skill) {
+        return { content: [{ type: "text" as const, text: `Skill '${input.id}' not found.` }], isError: true };
+      }
+      return toTextResult({ skill });
+    }
+  );
+
+  // ── Phase 5: MCP Resources (@-mentionable from clients that support resources) ──
+
+  const resourceText = (mime: string, uri: string, payload: unknown) => ({
+    contents: [{
+      uri,
+      mimeType: mime,
+      text: typeof payload === "string" ? payload : JSON.stringify(payload, null, 2),
+    }],
+  });
+
+  server.resource(
+    "scene-active",
+    "unity://scene/active",
+    { description: "Active Unity scene snapshot (name, path, dirty flag, root GameObjects)." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "manage_scene", params: { action: "inspect_active_scene" } });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "project-structure",
+    "unity://project/structure",
+    { description: "Asset folder tree of the active project." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "get_project_structure", params: {} });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "compilation-errors",
+    "unity://compilation/errors",
+    { description: "Current Unity compilation errors with file paths and line numbers." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "get_compilation_errors", params: {} });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "avatar-active",
+    "unity://avatar/active",
+    { description: "Scan of the active VRChat avatar: descriptor, params, frameworks, meshes, shaders." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "scan_avatar", params: {} });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "screenshot-scene",
+    "unity://screenshot/scene",
+    { description: "PNG capture of the Scene view (base64 inside JSON)." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "capture_screenshot", params: { source: "scene", width: 1024, height: 768 } });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "screenshot-game",
+    "unity://screenshot/game",
+    { description: "PNG capture of the Game view (base64 inside JSON)." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "capture_screenshot", params: { source: "game", width: 1024, height: 768 } });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  server.resource(
+    "perception",
+    "unity://perception/snapshot",
+    { description: "One-shot AI context: editor state + scene digest + project digest." },
+    async (uri) => {
+      const r = await bridge.call({ tool: "unity_perception", params: { action: "snapshot" } });
+      return resourceText("application/json", uri.href, r);
+    }
+  );
+
+  // ── Phase 5: MCP Prompts (slash-command style starters) ──
+
+  server.prompt(
+    "skill",
+    "Activate one of the registered expert skills (run list_skills first to discover ids).",
+    {
+      id: z.string().describe("Skill id, e.g. 'vrchat-upload-recipe', 'vrchat-avatar', 'cinemachine'."),
+    },
+    async ({ id }) => {
+      const result = invokeSkill(id);
+      const text = result.ok
+        ? result.inject
+        : `Skill '${id}' not found. Call list_skills to see available skills.`;
+      return {
+        messages: [{ role: "user" as const, content: { type: "text" as const, text } }],
+      };
+    }
+  );
+
+  server.prompt(
+    "vrchat-fix-upload",
+    "Pre-flight checklist for a VRChat avatar upload: scan, validate, optimize, report. Read-only.",
+    {},
+    async () => {
+      const skill = invokeSkill("vrchat-upload-recipe");
+      return {
+        messages: [{
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: skill.ok ? skill.inject : "Run scan_avatar, unity_validation.audit_active_scene, unity_optimization.scene_summary in order. Do not auto-fix; report findings and let the user approve.",
+          },
+        }],
+      };
+    }
+  );
+
+  server.prompt(
+    "optimize-avatar",
+    "Audit + suggest optimizations for the active VRChat avatar.",
+    {},
+    async () => {
+      const skill = invokeSkill("vrchat-quest");
+      return {
+        messages: [{
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: (skill.ok ? skill.inject : "") +
+              "\n\n## First step\nCall scan_avatar, then unity_optimization with actions mesh_audit, texture_audit, oversized_textures. Group findings by severity (Block/Warn/Info).",
+          },
+        }],
+      };
+    }
+  );
+
+  server.prompt(
+    "perception-snapshot",
+    "Inject a one-shot world snapshot (editor + scene + project) before further reasoning.",
+    {},
+    async () => {
+      const r = await bridge.call({ tool: "unity_perception", params: { action: "snapshot" } });
+      return {
+        messages: [{
+          role: "user" as const,
+          content: {
+            type: "text" as const,
+            text: `# Unity world snapshot\n\n\`\`\`json\n${JSON.stringify(r, null, 2)}\n\`\`\``,
+          },
+        }],
+      };
+    }
+  );
+
   // ── Generic fallback for any future tools ──
 
   server.tool(
@@ -626,7 +1238,4 @@ export async function startMcpServer(): Promise<void> {
       return toTextResult(response);
     }
   );
-
-  const transport = new StdioServerTransport();
-  await server.connect(transport);
 }

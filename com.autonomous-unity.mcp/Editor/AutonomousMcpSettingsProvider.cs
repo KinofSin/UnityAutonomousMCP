@@ -1,3 +1,4 @@
+using AutonomousMcp.Editor.UI;
 using UnityEditor;
 using UnityEngine;
 
@@ -6,7 +7,6 @@ namespace AutonomousMcp.Editor
     internal static class AutonomousMcpSettingsProvider
     {
         private static AutonomousMcpSettings _settings;
-        private static readonly AutonomousMcpConnection Connection = new AutonomousMcpConnection();
 
         [SettingsProvider]
         public static SettingsProvider CreateProvider()
@@ -16,48 +16,13 @@ namespace AutonomousMcp.Editor
                 label = "Autonomous Agent MCP",
                 guiHandler = _ =>
                 {
-                    _settings ??= AutonomousMcpSettings.Load();
-
-                    EditorGUILayout.LabelField("Connection", EditorStyles.boldLabel);
-                    _settings.Host = EditorGUILayout.TextField("Host", _settings.Host);
-                    _settings.HttpPort = EditorGUILayout.IntField("HTTP Port", _settings.HttpPort);
-                    _settings.TcpPort = EditorGUILayout.IntField("TCP Port", _settings.TcpPort);
-                    _settings.AutoConnect = EditorGUILayout.Toggle("Auto Connect", _settings.AutoConnect);
-
-                    using (new EditorGUILayout.HorizontalScope())
-                    {
-                        if (GUILayout.Button("Save"))
-                        {
-                            _settings.Save();
-                        }
-
-                        if (!Connection.IsConnected)
-                        {
-                            if (GUILayout.Button("Connect"))
-                            {
-                                Connection.Connect(_settings);
-                            }
-                        }
-                        else
-                        {
-                            if (GUILayout.Button("Disconnect"))
-                            {
-                                Connection.Disconnect();
-                            }
-                        }
-                    }
-
-                    EditorGUILayout.Space();
                     EditorGUILayout.HelpBox(
-                        Connection.IsConnected
-                            ? "Status: Connected (scaffold mode)"
-                            : "Status: Disconnected",
-                        Connection.IsConnected ? MessageType.Info : MessageType.Warning
-                    );
+                        "Autonomous MCP now has a dedicated window with Server, Tools, Logs, Integrations, and Clients tabs.",
+                        MessageType.Info);
 
-                    if (!string.IsNullOrEmpty(Connection.LastError))
+                    if (GUILayout.Button("Open Autonomous MCP Window", GUILayout.Height(28)))
                     {
-                        EditorGUILayout.HelpBox(Connection.LastError, MessageType.Error);
+                        AutonomousMcpSettingsWindow.Open();
                     }
                 },
                 keywords = new System.Collections.Generic.HashSet<string>(
@@ -72,7 +37,7 @@ namespace AutonomousMcp.Editor
             _settings = AutonomousMcpSettings.Load();
             if (_settings.AutoConnect)
             {
-                Connection.Connect(_settings);
+                AutonomousMcpConnection.Current.Connect(_settings);
             }
         }
     }

@@ -12,12 +12,26 @@ namespace AutonomousMcp.Editor
         public string TimestampUtc { get; set; }
     }
 
+    internal sealed class AutonomousMcpToolCallEntry
+    {
+        public string TimestampUtc { get; set; }
+        public string Tool { get; set; }
+        public string Category { get; set; }
+        public long DurationMs { get; set; }
+        public bool Success { get; set; }
+        public string Error { get; set; }
+    }
+
     [UnityEditor.InitializeOnLoad]
     internal static class AutonomousMcpLogStore
     {
         private const int MaxEntries = 1500;
+        private const int MaxToolCalls = 200;
+
         private static readonly List<AutonomousMcpLogEntry> Entries = new List<AutonomousMcpLogEntry>(MaxEntries);
+        private static readonly List<AutonomousMcpToolCallEntry> ToolCalls = new List<AutonomousMcpToolCallEntry>(MaxToolCalls);
         private static readonly object Gate = new object();
+        private static readonly object ToolGate = new object();
 
         static AutonomousMcpLogStore()
         {
@@ -43,6 +57,49 @@ namespace AutonomousMcp.Editor
                 }
 
                 return output;
+            }
+        }
+
+        public static void RecordToolCall(string tool, long ms, bool ok, string error, string category = null)
+        {
+            lock (ToolGate)
+            {
+                ToolCalls.Add(new AutonomousMcpToolCallEntry
+                {
+                    TimestampUtc = DateTime.UtcNow.ToString("O"),
+                    Tool = tool ?? string.Empty,
+                    Category = category ?? string.Empty,
+                    DurationMs = ms,
+                    Success = ok,
+                    Error = error ?? string.Empty
+                });
+
+                if (ToolCalls.Count > MaxToolCalls)
+                {
+                    ToolCalls.RemoveAt(0);
+                }
+            }
+        }
+
+        public static IReadOnlyList<AutonomousMcpToolCallEntry> ReadToolCalls(int limit)
+        {
+            lock (ToolGate)
+            {
+                var capped = Mathf.Clamp(limit, 1, MaxToolCalls);
+                var output = new List<AutonomousMcpToolCallEntry>(capped);
+                for (var index = ToolCalls.Count - 1; index >= 0 && output.Count < capped; index--)
+                {
+                    output.Add(ToolCalls[index]);
+                }
+                return output;
+            }
+        }
+
+        public static void ClearToolCalls()
+        {
+            lock (ToolGate)
+            {
+                ToolCalls.Clear();
             }
         }
 

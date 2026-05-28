@@ -1,7 +1,7 @@
 import { buildPlan } from "./planner.js";
 import { executePlan } from "./executor.js";
 import { MockUnityBridge, createUnityBridgeFromEnv } from "./unityBridge.js";
-import { startMcpServer } from "./mcpServer.js";
+import { startMcpServer, startMcpSseServer } from "./mcpServer.js";
 import type { AgentGoal } from "./types.js";
 
 function parseGoalFromArgs(args: string[]): AgentGoal {
@@ -22,6 +22,14 @@ function parseGoalFromArgs(args: string[]): AgentGoal {
 }
 
 async function main(): Promise<void> {
+  // MCP server modes (mutually exclusive with autonomous bootstrap):
+  //   --mcp       : stdio MCP transport (default for Cascade / Claude Desktop)
+  //   --mcp-sse   : SSE MCP transport on $MCP_SSE_PORT (default 18008)
+  if (process.argv.includes("--mcp-sse")) {
+    const port = Number(process.env.MCP_SSE_PORT ?? "18008");
+    await startMcpSseServer(port);
+    return;
+  }
   if (process.argv.includes("--mcp")) {
     await startMcpServer();
     return;

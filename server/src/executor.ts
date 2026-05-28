@@ -5,6 +5,8 @@ import { evaluateStep, resolveExecutionPolicyLimits } from "./policy.js";
 export interface ExecutionOptions {
   allowDestructive?: boolean;
   stopOnError?: boolean;
+  /** Phase 2: auto-create a Unity checkpoint before each high-risk step (default: true). */
+  autoCheckpoint?: boolean;
 }
 
 export interface StepResult {
@@ -13,12 +15,62 @@ export interface StepResult {
   success: boolean;
   reason?: string;
   response?: UnityResponse;
+  /** Phase 2: id of the checkpoint created before this step (if any). */
+  checkpointId?: string;
 }
 
 export interface ExecutionReport {
   goal: string;
   success: boolean;
   results: StepResult[];
+  /** Phase 2: all checkpoints created during this execution, oldest first. */
+  checkpointIds: string[];
+}
+
+/** Phase 2: tools known to mutate destructively. Used when step.risk is missing. */
+const DESTRUCTIVE_TOOLS = new Set<string>([
+  "manage_script",
+  "execute_csharp",
+  "execute_menu_item",
+  "execute_custom_tool",
+  "manage_gameobject",
+  "manage_prefab",
+  "manage_component",
+  "manage_material",
+  "manage_animator",
+  "manage_scriptable_object",
+  "manage_texture",
+  "manage_asset",
+  "manage_project_settings",
+]);
+
+function shouldCheckpoint(step: AgentStep): boolean {
+  if (step.risk === "high") return true;
+  if (step.risk === "medium" && DESTRUCTIVE_TOOLS.has(step.tool)) return true;
+  return false;
+}
+
+async function createCheckpoint(
+  bridge: UnityBridge,
+  step: AgentStep
+): Promise<string | undefined> {
+  try {
+    const response = await bridge.call({
+      tool: "manage_checkpoint",
+      params: {
+        action: "create",
+        label: `pre:${step.id}`,
+        trigger: step.tool,
+      },
+      requestId: `${step.id}-checkpoint`,
+    });
+    if (!response.success || !response.data) return undefined;
+    const data = response.data as Record<string, unknown>;
+    const id = data.id;
+    return typeof id === "string" ? id : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function sleep(ms: number): Promise<void> {
@@ -57,8 +109,10 @@ export async function executePlan(
 ): Promise<ExecutionReport> {
   const allowDestructive = options.allowDestructive ?? false;
   const stopOnError = options.stopOnError ?? true;
+  const autoCheckpoint = options.autoCheckpoint ?? true;
   const limits = resolveExecutionPolicyLimits();
   const results: StepResult[] = [];
+  const checkpointIds: string[] = [];
 
   for (const step of plan.steps) {
     const decision = evaluateStep(step, allowDestructive);
@@ -77,6 +131,13 @@ export async function executePlan(
       continue;
     }
 
+    // Phase 2: auto-checkpoint before destructive/high-risk steps.
+    let stepCheckpointId: string | undefined;
+    if (autoCheckpoint && shouldCheckpoint(step)) {
+      stepCheckpointId = await createCheckpoint(bridge, step);
+      if (stepCheckpointId) checkpointIds.push(stepCheckpointId);
+    }
+
     const response = await bridge.call({
       tool: step.tool,
       params: step.params,
@@ -89,7 +150,8 @@ export async function executePlan(
       skipped: false,
       success: stepSuccess,
       reason: stepSuccess ? undefined : response.error,
-      response
+      response,
+      checkpointId: stepCheckpointId
     });
 
     if (!stepSuccess && stopOnError) {
@@ -215,6 +277,7 @@ export async function executePlan(
   return {
     goal: plan.goal,
     success,
-    results
+    results,
+    checkpointIds
   };
 }

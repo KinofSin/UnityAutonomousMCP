@@ -185,9 +185,29 @@ namespace AutonomousMcp.Editor
 
             var envelope = ParseEnvelope(requestBody);
             envelope.@params ??= new JObject();
+
+            // Phase 1: auto-populate identity from transport when client didn't include it.
+            if (string.IsNullOrEmpty(envelope.transport)) envelope.transport = "http";
+            if (string.IsNullOrEmpty(envelope.clientId))
+            {
+                envelope.clientId = ExtractClientIdFromHttp(context.Request);
+            }
+            if (string.IsNullOrEmpty(envelope.clientName))
+            {
+                envelope.clientName = context.Request.Headers["X-MCP-Client"] ?? "http-client";
+            }
+
             var toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
             var payload = JsonConvert.SerializeObject(toolResponse);
             WriteHttpResponse(context.Response, 200, payload);
+        }
+
+        private static string ExtractClientIdFromHttp(HttpListenerRequest request)
+        {
+            // Preferred: X-MCP-Client-Id header. Fallback: remote endpoint.
+            var headerId = request.Headers["X-MCP-Client-Id"];
+            if (!string.IsNullOrEmpty(headerId)) return headerId;
+            return request.RemoteEndPoint?.ToString() ?? "http-anonymous";
         }
 
         private void TcpLoop()
@@ -212,6 +232,15 @@ namespace AutonomousMcp.Editor
 
                         var envelope = ParseEnvelope(line);
                         envelope.@params ??= new JObject();
+
+                        // Phase 1: identity defaults for TCP transport
+                        if (string.IsNullOrEmpty(envelope.transport)) envelope.transport = "tcp";
+                        if (string.IsNullOrEmpty(envelope.clientId))
+                        {
+                            envelope.clientId = client?.Client?.RemoteEndPoint?.ToString() ?? "tcp-anonymous";
+                        }
+                        if (string.IsNullOrEmpty(envelope.clientName)) envelope.clientName = "tcp-client";
+
                         var toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
                         writer.WriteLine(JsonConvert.SerializeObject(toolResponse));
                     }

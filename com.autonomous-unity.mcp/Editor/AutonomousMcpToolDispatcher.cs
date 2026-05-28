@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.IO;
 using System.Linq;
 using System.Reflection;
@@ -9,6 +10,7 @@ using UnityEditor;
 using UnityEditor.SceneManagement;
 using UnityEngine;
 using UnityEngine.SceneManagement;
+using Debug = UnityEngine.Debug;
 
 namespace AutonomousMcp.Editor
 {
@@ -16,109 +18,134 @@ namespace AutonomousMcp.Editor
     {
         private const int MaxBatchDepth = 3;
 
+        // Names handled by the legacy switch below — used by list_tools_with_metadata to
+        // expose pre-registry tools that haven't been moved to IMcpTool yet.
+        public static readonly string[] LegacyToolNames = new[]
+        {
+            "health_check", "read_console", "manage_scene", "manage_gameobject", "manage_script",
+            "validate_script", "run_tests", "get_test_job", "manage_component", "execute_menu_item",
+            "manage_asset", "manage_editor", "read_script", "capture_screenshot", "manage_animator",
+            "manage_material", "execute_csharp", "search_hierarchy", "get_project_structure",
+            "manage_prefab", "manage_selection", "manage_layer_tag", "get_compilation_errors",
+            "manage_project_settings", "get_installed_packages", "list_shaders", "get_asset_info",
+            "scan_armature", "scan_avatar", "manage_scriptable_object", "manage_texture",
+            "refresh_unity", "list_menu_items", "inspect_type", "list_custom_tools",
+            "execute_custom_tool", "batch_execute"
+        };
+
         public static AutonomousMcpToolResponse Dispatch(AutonomousMcpEnvelope envelope)
         {
             return AutonomousMcpMainThread.Invoke(() => DispatchOnMainThread(envelope, 0));
         }
 
-        private static AutonomousMcpToolResponse DispatchOnMainThread(AutonomousMcpEnvelope envelope, int depth)
+        internal static AutonomousMcpToolResponse DispatchOnMainThread(AutonomousMcpEnvelope envelope, int depth)
         {
+            var sw = Stopwatch.StartNew();
+            var toolNameForLog = envelope?.tool ?? string.Empty;
+            string categoryForLog = null;
+
+            AutonomousMcpToolResponse R(AutonomousMcpToolResponse response)
+            {
+                sw.Stop();
+                AutonomousMcpLogStore.RecordToolCall(
+                    toolNameForLog,
+                    sw.ElapsedMilliseconds,
+                    response?.success ?? false,
+                    response?.error,
+                    categoryForLog);
+                return response;
+            }
+
             if (envelope == null || string.IsNullOrWhiteSpace(envelope.tool))
             {
-                return Error("Missing tool name.");
+                return R(Error("Missing tool name."));
             }
 
             var args = envelope.@params ?? new JObject();
 
+            // Phase 1: client identification + permission evaluation
+            var clientId = string.IsNullOrEmpty(envelope.clientId) ? "anonymous" : envelope.clientId;
+            var clientName = string.IsNullOrEmpty(envelope.clientName) ? "unknown" : envelope.clientName;
+            var transport = string.IsNullOrEmpty(envelope.transport) ? "http" : envelope.transport;
+            AutonomousMcp.Editor.Core.PermissionStore.UpsertClient(clientId, clientName, transport);
+
+            // Phase 0: try ToolRegistry first (registry-routed tools win over the legacy switch).
+            // batch_execute remains in the switch because it needs the recursion depth parameter.
+            if (envelope.tool != "batch_execute" &&
+                AutonomousMcp.Editor.Core.ToolRegistry.TryResolve(envelope.tool, out var registryEntry))
+            {
+                categoryForLog = registryEntry.Category.ToString();
+                // Phase 1: permission gate
+                var decision = AutonomousMcp.Editor.Core.PermissionStore.Evaluate(
+                    clientId, registryEntry.Name, registryEntry.Mode);
+                if (decision != AutonomousMcp.Editor.Core.PermissionDecision.Allow)
+                {
+                    return R(PermissionDenied(envelope.tool, decision, registryEntry.Mode));
+                }
+
+                try
+                {
+                    return R(registryEntry.Handler(args) ?? Error($"Tool '{envelope.tool}' returned null."));
+                }
+                catch (Exception ex)
+                {
+                    return R(Error($"Tool '{envelope.tool}' threw: {ex.Message}"));
+                }
+            }
+
             try
             {
+                AutonomousMcpToolResponse legacy;
                 switch (envelope.tool)
                 {
-                    case "health_check":
-                        return HandleHealthCheck(args);
-                    case "read_console":
-                        return HandleReadConsole(args);
-                    case "manage_scene":
-                        return HandleManageScene(args);
-                    case "manage_gameobject":
-                        return HandleManageGameObject(args);
-                    case "manage_script":
-                        return HandleManageScript(args);
-                    case "validate_script":
-                        return HandleValidateScript(args);
-                    case "run_tests":
-                        return HandleRunTests(args);
-                    case "get_test_job":
-                        return HandleGetTestJob(args);
-                    case "manage_component":
-                        return HandleManageComponent(args);
-                    case "execute_menu_item":
-                        return HandleExecuteMenuItem(args);
-                    case "manage_asset":
-                        return HandleManageAsset(args);
-                    case "manage_editor":
-                        return HandleManageEditor(args);
-                    case "read_script":
-                        return HandleReadScript(args);
-                    case "capture_screenshot":
-                        return HandleCaptureScreenshot(args);
-                    case "manage_animator":
-                        return HandleManageAnimator(args);
-                    case "manage_material":
-                        return HandleManageMaterial(args);
-                    case "execute_csharp":
-                        return HandleExecuteCSharp(args);
-                    case "search_hierarchy":
-                        return HandleSearchHierarchy(args);
-                    case "get_project_structure":
-                        return HandleGetProjectStructure(args);
-                    case "manage_prefab":
-                        return HandleManagePrefab(args);
-                    case "manage_selection":
-                        return HandleManageSelection(args);
-                    case "manage_layer_tag":
-                        return HandleManageLayerTag(args);
-                    case "get_compilation_errors":
-                        return HandleGetCompilationErrors(args);
-                    case "manage_project_settings":
-                        return HandleManageProjectSettings(args);
-                    case "get_installed_packages":
-                        return HandleGetInstalledPackages(args);
-                    case "list_shaders":
-                        return HandleListShaders(args);
-                    case "get_asset_info":
-                        return HandleGetAssetInfo(args);
-                    case "scan_armature":
-                        return HandleScanArmature(args);
-                    case "scan_avatar":
-                        return HandleScanAvatar(args);
-                    case "manage_scriptable_object":
-                        return HandleManageScriptableObject(args);
-                    case "manage_texture":
-                        return HandleManageTexture(args);
-                    case "refresh_unity":
-                        return HandleRefreshUnity(args);
-                    case "list_menu_items":
-                        return HandleListMenuItems(args);
-                    case "inspect_type":
-                        return HandleInspectType(args);
-                    case "list_custom_tools":
-                        return HandleListCustomTools(args);
-                    case "execute_custom_tool":
-                        return HandleExecuteCustomTool(args);
-                    case "batch_execute":
-                        return HandleBatchExecute(args, depth);
-                    default:
-                        return Error($"Unsupported tool '{envelope.tool}'.");
+                    case "health_check":               legacy = HandleHealthCheck(args); break;
+                    case "read_console":               legacy = HandleReadConsole(args); break;
+                    case "manage_scene":               legacy = HandleManageScene(args); break;
+                    case "manage_gameobject":          legacy = HandleManageGameObject(args); break;
+                    case "manage_script":              legacy = HandleManageScript(args); break;
+                    case "validate_script":            legacy = HandleValidateScript(args); break;
+                    case "run_tests":                  legacy = HandleRunTests(args); break;
+                    case "get_test_job":               legacy = HandleGetTestJob(args); break;
+                    case "manage_component":           legacy = HandleManageComponent(args); break;
+                    case "execute_menu_item":          legacy = HandleExecuteMenuItem(args); break;
+                    case "manage_asset":               legacy = HandleManageAsset(args); break;
+                    case "manage_editor":              legacy = HandleManageEditor(args); break;
+                    case "read_script":                legacy = HandleReadScript(args); break;
+                    case "capture_screenshot":         legacy = HandleCaptureScreenshot(args); break;
+                    case "manage_animator":            legacy = HandleManageAnimator(args); break;
+                    case "manage_material":            legacy = HandleManageMaterial(args); break;
+                    case "execute_csharp":             legacy = HandleExecuteCSharp(args); break;
+                    case "search_hierarchy":           legacy = HandleSearchHierarchy(args); break;
+                    case "get_project_structure":      legacy = HandleGetProjectStructure(args); break;
+                    case "manage_prefab":              legacy = HandleManagePrefab(args); break;
+                    case "manage_selection":           legacy = HandleManageSelection(args); break;
+                    case "manage_layer_tag":           legacy = HandleManageLayerTag(args); break;
+                    case "get_compilation_errors":     legacy = HandleGetCompilationErrors(args); break;
+                    case "manage_project_settings":    legacy = HandleManageProjectSettings(args); break;
+                    case "get_installed_packages":     legacy = HandleGetInstalledPackages(args); break;
+                    case "list_shaders":               legacy = HandleListShaders(args); break;
+                    case "get_asset_info":             legacy = HandleGetAssetInfo(args); break;
+                    case "scan_armature":              legacy = HandleScanArmature(args); break;
+                    case "scan_avatar":                legacy = HandleScanAvatar(args); break;
+                    case "manage_scriptable_object":   legacy = HandleManageScriptableObject(args); break;
+                    case "manage_texture":             legacy = HandleManageTexture(args); break;
+                    case "refresh_unity":              legacy = HandleRefreshUnity(args); break;
+                    case "list_menu_items":            legacy = HandleListMenuItems(args); break;
+                    case "inspect_type":               legacy = HandleInspectType(args); break;
+                    case "list_custom_tools":          legacy = HandleListCustomTools(args); break;
+                    case "execute_custom_tool":        legacy = HandleExecuteCustomTool(args); break;
+                    case "batch_execute":              legacy = HandleBatchExecute(args, depth); break;
+                    default:                           legacy = Error($"Unsupported tool '{envelope.tool}'."); break;
                 }
+                return R(legacy);
             }
             catch (Exception ex)
             {
-                return Error(ex.Message);
+                return R(Error(ex.Message));
             }
         }
 
-        private static AutonomousMcpToolResponse HandleReadConsole(JObject args)
+        internal static AutonomousMcpToolResponse HandleReadConsole(JObject args)
         {
             var level = args.Value<string>("level") ?? "all";
             var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 200, 1000));
@@ -133,7 +160,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleHealthCheck(JObject args)
+        internal static AutonomousMcpToolResponse HandleHealthCheck(JObject args)
         {
             var scene = SceneManager.GetActiveScene();
 
@@ -217,7 +244,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleManageScene(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageScene(JObject args)
         {
             var action = args.Value<string>("action") ?? "inspect_active_scene";
             var scene = SceneManager.GetActiveScene();
@@ -302,7 +329,7 @@ namespace AutonomousMcp.Editor
             }
         }
 
-        private static AutonomousMcpToolResponse HandleManageScript(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageScript(JObject args)
         {
             var action = args.Value<string>("action") ?? "";
             if (action != "create_or_update")
@@ -345,7 +372,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleManageGameObject(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageGameObject(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -383,7 +410,7 @@ namespace AutonomousMcp.Editor
             }
         }
 
-        private static AutonomousMcpToolResponse HandleCreateGameObject(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleCreateGameObject(JObject args, string action)
         {
             var name = args.Value<string>("name") ?? "AgentGameObject";
             var primitiveTypeRaw = args.Value<string>("primitiveType") ?? args.Value<string>("primitive_type");
@@ -434,7 +461,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleFindGameObject(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleFindGameObject(JObject args, string action)
         {
             var name = args.Value<string>("name") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(name))
@@ -467,7 +494,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleFindContainsGameObject(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleFindContainsGameObject(JObject args, string action)
         {
             var query = args.Value<string>("query") ?? args.Value<string>("name") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(query))
@@ -501,7 +528,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleReparentGameObject(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleReparentGameObject(JObject args, string action)
         {
             var child = ResolveGameObject(args);
             if (child == null)
@@ -535,7 +562,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetChildren(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleGetChildren(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -576,7 +603,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetParent(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleGetParent(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -601,7 +628,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetFullHierarchy(string action)
+        internal static AutonomousMcpToolResponse HandleGetFullHierarchy(string action)
         {
             var scene = SceneManager.GetActiveScene();
             var roots = scene.GetRootGameObjects();
@@ -620,7 +647,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetActive(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleSetActive(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -646,7 +673,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleRename(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleRename(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -674,7 +701,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleDestroyGameObject(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleDestroyGameObject(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -695,7 +722,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetGameObjectTransform(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleSetGameObjectTransform(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -733,7 +760,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetWorldTransform(JObject args, string action)
+        internal static AutonomousMcpToolResponse HandleGetWorldTransform(JObject args, string action)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -893,7 +920,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── manage_component ─────────
 
-        private static AutonomousMcpToolResponse HandleManageComponent(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageComponent(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -914,7 +941,7 @@ namespace AutonomousMcp.Editor
             }
         }
 
-        private static AutonomousMcpToolResponse HandleAddComponent(JObject args)
+        internal static AutonomousMcpToolResponse HandleAddComponent(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -951,7 +978,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleRemoveComponent(JObject args)
+        internal static AutonomousMcpToolResponse HandleRemoveComponent(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -980,7 +1007,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetAllComponents(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetAllComponents(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -1014,7 +1041,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetComponentProperties(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetComponentProperties(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -1062,7 +1089,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetComponentProperty(JObject args)
+        internal static AutonomousMcpToolResponse HandleSetComponentProperty(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -1258,7 +1285,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── execute_menu_item ─────────
 
-        private static AutonomousMcpToolResponse HandleExecuteMenuItem(JObject args)
+        internal static AutonomousMcpToolResponse HandleExecuteMenuItem(JObject args)
         {
             var menuPath = args.Value<string>("menu_path") ?? args.Value<string>("menuPath") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(menuPath))
@@ -1275,7 +1302,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── manage_asset ─────────
 
-        private static AutonomousMcpToolResponse HandleManageAsset(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageAsset(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -1290,7 +1317,7 @@ namespace AutonomousMcp.Editor
             }
         }
 
-        private static AutonomousMcpToolResponse HandleFindAssets(JObject args)
+        internal static AutonomousMcpToolResponse HandleFindAssets(JObject args)
         {
             var filter = args.Value<string>("filter") ?? string.Empty;
             var searchFolder = args.Value<string>("folder") ?? args.Value<string>("search_folder") ?? "Assets";
@@ -1329,7 +1356,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleInstantiatePrefab(JObject args)
+        internal static AutonomousMcpToolResponse HandleInstantiatePrefab(JObject args)
         {
             var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("assetPath") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(assetPath))
@@ -1370,7 +1397,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── manage_editor ─────────
 
-        private static AutonomousMcpToolResponse HandleManageEditor(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageEditor(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -1407,7 +1434,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── read_script ─────────
 
-        private static AutonomousMcpToolResponse HandleReadScript(JObject args)
+        internal static AutonomousMcpToolResponse HandleReadScript(JObject args)
         {
             var scriptPath = args.Value<string>("scriptPath") ?? args.Value<string>("script_path") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(scriptPath) ||
@@ -1437,7 +1464,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── capture_screenshot ─────────
 
-        private static AutonomousMcpToolResponse HandleCaptureScreenshot(JObject args)
+        internal static AutonomousMcpToolResponse HandleCaptureScreenshot(JObject args)
         {
             var source = (args.Value<string>("source") ?? "scene").Trim().ToLowerInvariant();
             var width = args.Value<int?>("width") ?? 512;
@@ -1550,7 +1577,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── manage_animator ─────────
 
-        private static AutonomousMcpToolResponse HandleManageAnimator(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageAnimator(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -1588,7 +1615,7 @@ namespace AutonomousMcp.Editor
             return rac as UnityEditor.Animations.AnimatorController;
         }
 
-        private static AutonomousMcpToolResponse HandleGetAnimatorParameters(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetAnimatorParameters(JObject args)
         {
             var animator = ResolveAnimator(args);
             if (animator == null)
@@ -1641,7 +1668,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetAnimatorParameter(JObject args)
+        internal static AutonomousMcpToolResponse HandleSetAnimatorParameter(JObject args)
         {
             var animator = ResolveAnimator(args);
             if (animator == null)
@@ -1715,7 +1742,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetAnimatorLayers(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetAnimatorLayers(JObject args)
         {
             var animator = ResolveAnimator(args);
             if (animator == null)
@@ -1748,7 +1775,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetAnimatorStates(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetAnimatorStates(JObject args)
         {
             var animator = ResolveAnimator(args);
             if (animator == null)
@@ -1802,7 +1829,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetCurrentAnimatorState(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetCurrentAnimatorState(JObject args)
         {
             if (!EditorApplication.isPlaying)
                 return Error("get_current_state requires Play mode.");
@@ -1828,7 +1855,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── manage_material ─────────
 
-        private static AutonomousMcpToolResponse HandleManageMaterial(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageMaterial(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -1847,7 +1874,7 @@ namespace AutonomousMcp.Editor
             }
         }
 
-        private static AutonomousMcpToolResponse HandleGetMaterial(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetMaterial(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -1879,7 +1906,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetMaterialProperties(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetMaterialProperties(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -1952,7 +1979,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetMaterialProperty(JObject args)
+        internal static AutonomousMcpToolResponse HandleSetMaterialProperty(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -2039,7 +2066,7 @@ namespace AutonomousMcp.Editor
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleListMaterials(JObject args)
+        internal static AutonomousMcpToolResponse HandleListMaterials(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -2074,7 +2101,7 @@ namespace AutonomousMcp.Editor
 
         // ───────── execute_csharp ─────────
 
-        private static AutonomousMcpToolResponse HandleExecuteCSharp(JObject args)
+        internal static AutonomousMcpToolResponse HandleExecuteCSharp(JObject args)
         {
             var code = args.Value<string>("code") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(code))
@@ -2177,7 +2204,7 @@ public static class __McpEval
 
         // ───────── search_hierarchy ─────────
 
-        private static AutonomousMcpToolResponse HandleSearchHierarchy(JObject args)
+        internal static AutonomousMcpToolResponse HandleSearchHierarchy(JObject args)
         {
             var namePattern = args.Value<string>("name_pattern") ?? args.Value<string>("namePattern");
             var componentType = args.Value<string>("component_type") ?? args.Value<string>("componentType");
@@ -2274,7 +2301,7 @@ public static class __McpEval
 
         // ───────── get_project_structure ─────────
 
-        private static AutonomousMcpToolResponse HandleGetProjectStructure(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetProjectStructure(JObject args)
         {
             var rootPath = args.Value<string>("path") ?? "Assets";
             var maxDepth = Math.Max(1, Math.Min(args.Value<int?>("depth") ?? 3, 10));
@@ -2378,7 +2405,7 @@ public static class __McpEval
 
         // ───────── manage_prefab ─────────
 
-        private static AutonomousMcpToolResponse HandleManagePrefab(JObject args)
+        internal static AutonomousMcpToolResponse HandleManagePrefab(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -2510,7 +2537,7 @@ public static class __McpEval
 
         // ───────── manage_selection ─────────
 
-        private static AutonomousMcpToolResponse HandleManageSelection(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageSelection(JObject args)
         {
             var action = args.Value<string>("action") ?? "get";
 
@@ -2614,7 +2641,7 @@ public static class __McpEval
 
         // ───────── manage_layer_tag ─────────
 
-        private static AutonomousMcpToolResponse HandleManageLayerTag(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageLayerTag(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -2768,7 +2795,7 @@ public static class __McpEval
 
         // ───────── get_compilation_errors ─────────
 
-        private static AutonomousMcpToolResponse HandleGetCompilationErrors(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetCompilationErrors(JObject args)
         {
             var includeWarnings = args.Value<bool?>("include_warnings") ?? false;
 
@@ -2838,7 +2865,7 @@ public static class __McpEval
 
         // ───────── manage_project_settings ─────────
 
-        private static AutonomousMcpToolResponse HandleManageProjectSettings(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageProjectSettings(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -2948,7 +2975,7 @@ public static class __McpEval
 
         // ───────── get_installed_packages ─────────
 
-        private static AutonomousMcpToolResponse HandleGetInstalledPackages(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetInstalledPackages(JObject args)
         {
             var includeBuiltin = args.Value<bool?>("include_builtin") ?? false;
 
@@ -3075,7 +3102,7 @@ public static class __McpEval
 
         // ───────── list_shaders ─────────
 
-        private static AutonomousMcpToolResponse HandleListShaders(JObject args)
+        internal static AutonomousMcpToolResponse HandleListShaders(JObject args)
         {
             var filter = args.Value<string>("filter") ?? "";
             var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 100, 500));
@@ -3182,7 +3209,7 @@ public static class __McpEval
 
         // ───────── get_asset_info ─────────
 
-        private static AutonomousMcpToolResponse HandleGetAssetInfo(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetAssetInfo(JObject args)
         {
             var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("assetPath") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(assetPath))
@@ -3352,7 +3379,7 @@ public static class __McpEval
 
         // ───────── scan_armature ─────────
 
-        private static AutonomousMcpToolResponse HandleScanArmature(JObject args)
+        internal static AutonomousMcpToolResponse HandleScanArmature(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -3493,7 +3520,7 @@ public static class __McpEval
 
         // ───────── scan_avatar ─────────
 
-        private static AutonomousMcpToolResponse HandleScanAvatar(JObject args)
+        internal static AutonomousMcpToolResponse HandleScanAvatar(JObject args)
         {
             var target = ResolveGameObject(args);
             if (target == null)
@@ -3763,7 +3790,7 @@ public static class __McpEval
             return Success(result);
         }
 
-        private static AutonomousMcpToolResponse HandleValidateScript(JObject args)
+        internal static AutonomousMcpToolResponse HandleValidateScript(JObject args)
         {
             var strict = args.Value<bool?>("strict") ?? false;
             AssetDatabase.Refresh();
@@ -3776,7 +3803,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleRunTests(JObject args)
+        internal static AutonomousMcpToolResponse HandleRunTests(JObject args)
         {
             var mode = args.Value<string>("mode") ?? "editmode";
 
@@ -3797,7 +3824,7 @@ public static class __McpEval
             }
         }
 
-        private static AutonomousMcpToolResponse HandleGetTestJob(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetTestJob(JObject args)
         {
             var jobId = args.Value<string>("jobId") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(jobId))
@@ -3818,7 +3845,7 @@ public static class __McpEval
 
         // ───────── manage_scriptable_object ─────────
 
-        private static AutonomousMcpToolResponse HandleManageScriptableObject(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageScriptableObject(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -3839,7 +3866,7 @@ public static class __McpEval
             }
         }
 
-        private static AutonomousMcpToolResponse HandleFindScriptableObjects(JObject args)
+        internal static AutonomousMcpToolResponse HandleFindScriptableObjects(JObject args)
         {
             var filter = args.Value<string>("filter") ?? args.Value<string>("search") ?? "t:ScriptableObject";
             if (!filter.Contains("t:")) filter = $"t:ScriptableObject {filter}";
@@ -3887,7 +3914,7 @@ public static class __McpEval
             return null;
         }
 
-        private static AutonomousMcpToolResponse HandleGetScriptableObjectProperties(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetScriptableObjectProperties(JObject args)
         {
             var so = ResolveScriptableObject(args);
             if (so == null)
@@ -3924,7 +3951,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetScriptableObjectProperty(JObject args)
+        internal static AutonomousMcpToolResponse HandleSetScriptableObjectProperty(JObject args)
         {
             var so = ResolveScriptableObject(args);
             if (so == null)
@@ -3961,7 +3988,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleCreateScriptableObject(JObject args)
+        internal static AutonomousMcpToolResponse HandleCreateScriptableObject(JObject args)
         {
             var typeName = args.Value<string>("type") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(typeName))
@@ -3995,7 +4022,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleListScriptableObjectFields(JObject args)
+        internal static AutonomousMcpToolResponse HandleListScriptableObjectFields(JObject args)
         {
             var typeName = args.Value<string>("type") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(typeName))
@@ -4033,7 +4060,7 @@ public static class __McpEval
 
         // ───────── manage_texture ─────────
 
-        private static AutonomousMcpToolResponse HandleManageTexture(JObject args)
+        internal static AutonomousMcpToolResponse HandleManageTexture(JObject args)
         {
             var action = args.Value<string>("action") ?? string.Empty;
 
@@ -4059,7 +4086,7 @@ public static class __McpEval
             return AssetImporter.GetAtPath(assetPath) as TextureImporter;
         }
 
-        private static AutonomousMcpToolResponse HandleGetTextureImportSettings(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetTextureImportSettings(JObject args)
         {
             var importer = ResolveTextureImporter(args);
             if (importer == null)
@@ -4095,7 +4122,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleSetTextureImportSettings(JObject args)
+        internal static AutonomousMcpToolResponse HandleSetTextureImportSettings(JObject args)
         {
             var importer = ResolveTextureImporter(args);
             if (importer == null)
@@ -4158,7 +4185,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleGetTextureInfo(JObject args)
+        internal static AutonomousMcpToolResponse HandleGetTextureInfo(JObject args)
         {
             var assetPath = args.Value<string>("asset_path") ?? args.Value<string>("path") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(assetPath))
@@ -4188,7 +4215,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleFindTextures(JObject args)
+        internal static AutonomousMcpToolResponse HandleFindTextures(JObject args)
         {
             var filter = args.Value<string>("filter") ?? args.Value<string>("search") ?? "t:Texture2D";
             if (!filter.Contains("t:")) filter = $"t:Texture2D {filter}";
@@ -4225,7 +4252,7 @@ public static class __McpEval
 
         // ───────── refresh_unity ─────────
 
-        private static AutonomousMcpToolResponse HandleRefreshUnity(JObject args)
+        internal static AutonomousMcpToolResponse HandleRefreshUnity(JObject args)
         {
             var importAll = args.Value<bool?>("import_all") ?? false;
 
@@ -4244,7 +4271,7 @@ public static class __McpEval
 
         // ───────── list_menu_items ─────────
 
-        private static AutonomousMcpToolResponse HandleListMenuItems(JObject args)
+        internal static AutonomousMcpToolResponse HandleListMenuItems(JObject args)
         {
             var filter = args.Value<string>("filter") ?? string.Empty;
             var limit = Math.Max(1, Math.Min(args.Value<int?>("limit") ?? 200, 1000));
@@ -4305,7 +4332,7 @@ public static class __McpEval
 
         // ───────── inspect_type ─────────
 
-        private static AutonomousMcpToolResponse HandleInspectType(JObject args)
+        internal static AutonomousMcpToolResponse HandleInspectType(JObject args)
         {
             var typeName = args.Value<string>("type") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(typeName))
@@ -4482,7 +4509,7 @@ public static class __McpEval
             }
         }
 
-        private static AutonomousMcpToolResponse HandleListCustomTools(JObject args)
+        internal static AutonomousMcpToolResponse HandleListCustomTools(JObject args)
         {
             // Force re-scan if requested
             if (args.Value<bool?>("rescan") == true) _customToolsCached = false;
@@ -4512,7 +4539,7 @@ public static class __McpEval
             }));
         }
 
-        private static AutonomousMcpToolResponse HandleExecuteCustomTool(JObject args)
+        internal static AutonomousMcpToolResponse HandleExecuteCustomTool(JObject args)
         {
             var toolName = args.Value<string>("tool_name") ?? args.Value<string>("name") ?? string.Empty;
             if (string.IsNullOrWhiteSpace(toolName))
@@ -4548,7 +4575,7 @@ public static class __McpEval
 
         // ───────── batch_execute ─────────
 
-        private static AutonomousMcpToolResponse HandleBatchExecute(JObject args, int depth)
+        internal static AutonomousMcpToolResponse HandleBatchExecute(JObject args, int depth)
         {
             if (depth >= MaxBatchDepth)
             {
@@ -4611,6 +4638,48 @@ public static class __McpEval
                 success = false,
                 data = null,
                 error = message
+            };
+        }
+
+        // Phase 1: structured permission-denied response with a human-readable reason.
+        private static AutonomousMcpToolResponse PermissionDenied(
+            string toolName,
+            AutonomousMcp.Editor.Core.PermissionDecision decision,
+            AutonomousMcp.Editor.Core.ToolMode toolMode)
+        {
+            string reason;
+            switch (decision)
+            {
+                case AutonomousMcp.Editor.Core.PermissionDecision.DenyByMode:
+                    reason = $"Server is in Ask mode; tool '{toolName}' is {toolMode}. " +
+                             "Switch to Agent mode in Project Settings > Autonomous MCP.";
+                    break;
+                case AutonomousMcp.Editor.Core.PermissionDecision.DenyByPolicy:
+                    reason = $"Tool '{toolName}' is denied by an explicit policy override.";
+                    break;
+                case AutonomousMcp.Editor.Core.PermissionDecision.RequiresApproval:
+                    reason = $"Tool '{toolName}' ({toolMode}) requires approval. " +
+                             "Approve it in Project Settings > Autonomous MCP, or set autoApproveMutate / autoApproveDestructive.";
+                    break;
+                case AutonomousMcp.Editor.Core.PermissionDecision.DenyClientNotApproved:
+                    reason = $"Client is not approved. Approve it in Project Settings > Autonomous MCP.";
+                    break;
+                default:
+                    reason = $"Tool '{toolName}' denied.";
+                    break;
+            }
+
+            return new AutonomousMcpToolResponse
+            {
+                success = false,
+                data = JToken.FromObject(new
+                {
+                    code = "permission_denied",
+                    decision = decision.ToString(),
+                    tool = toolName,
+                    toolMode = toolMode.ToString()
+                }),
+                error = reason
             };
         }
     }

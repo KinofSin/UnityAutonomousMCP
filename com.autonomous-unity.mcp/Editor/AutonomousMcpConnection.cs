@@ -4,6 +4,8 @@ namespace AutonomousMcp.Editor
 {
     internal sealed class AutonomousMcpConnection
     {
+        public static AutonomousMcpConnection Current { get; } = new AutonomousMcpConnection();
+
         private AutonomousMcpTransportHost _host;
 
         public bool IsConnected { get; private set; }
