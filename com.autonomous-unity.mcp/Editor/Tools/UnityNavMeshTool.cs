@@ -28,10 +28,10 @@ namespace AutonomousMcp.Editor.Tools
             switch (action)
             {
                 case "bake":
-                    NavMeshBuilder.BuildNavMesh();
+                    UnityEditor.AI.NavMeshBuilder.BuildNavMesh();
                     return Ok(new { action, baked = true });
                 case "clear":
-                    NavMeshBuilder.ClearAllNavMeshes();
+                    UnityEditor.AI.NavMeshBuilder.ClearAllNavMeshes();
                     return Ok(new { action, cleared = true });
                 case "info":
                 {

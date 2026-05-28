@@ -4105,7 +4105,7 @@ public static class __McpEval
                 alphaIsTransparency = importer.alphaIsTransparency,
                 maxTextureSize = importer.maxTextureSize,
                 textureCompression = importer.textureCompression.ToString(),
-                crunchedCompression = importer.crunchCompression,
+                crunchedCompression = importer.crunchedCompression,
                 compressionQuality = importer.compressionQuality,
                 filterMode = importer.filterMode.ToString(),
                 wrapMode = importer.wrapMode.ToString(),
@@ -4141,7 +4141,7 @@ public static class __McpEval
             }
 
             var crunch = args.Value<bool?>("crunch_compression") ?? args.Value<bool?>("crunchedCompression");
-            if (crunch.HasValue) { importer.crunchCompression = crunch.Value; changed = true; }
+            if (crunch.HasValue) { importer.crunchedCompression = crunch.Value; changed = true; }
 
             var quality = args.Value<int?>("compression_quality") ?? args.Value<int?>("compressionQuality");
             if (quality.HasValue) { importer.compressionQuality = quality.Value; changed = true; }
@@ -4303,7 +4303,7 @@ public static class __McpEval
                         if (string.IsNullOrEmpty(itemPath)) continue;
 
                         if (!string.IsNullOrEmpty(filter) &&
-                            !itemPath.IndexOf(filter, StringComparison.OrdinalIgnoreCase) >= 0)
+                            itemPath.IndexOf(filter, StringComparison.OrdinalIgnoreCase) < 0)
                             continue;
 
                         menuItems.Add(JToken.FromObject(new

@@ -74,7 +74,7 @@ namespace AutonomousMcp.Editor.Tools
                         {
                             name = c.name,
                             instanceId = c.GetInstanceID(),
-                            asset = (c.GetType().GetProperty("playableAsset")?.GetValue(c) as Object)?.name
+                            asset = (c.GetType().GetProperty("playableAsset")?.GetValue(c) as UnityEngine.Object)?.name
                         }).ToList();
                     return Ok(new { action, count = found.Count, directors = found });
                 }
