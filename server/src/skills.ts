@@ -123,6 +123,127 @@ const SKILLS: Skill[] = [
     recommendedTools: ["unity_build_manage", "manage_project_settings", "list_shaders"],
     requiredPackages: [],
   },
+  // ── Merged from the local Phase 0–7 catalog (12 skills not covered by the patch's set) ──
+  {
+    id: "vrchat-physbones",
+    name: "VRChat PhysBones",
+    category: "vrchat",
+    description: "PhysBone chain setup, colliders, immobile types, allow grab/pose.",
+    systemPrompt:
+      "VRC PhysBone replaces DynamicBone for VRChat. Use Pull (0.2 default), Stiffness, Drag for natural motion. Set ImmobileType=Animation for clothing that should not slide. Allow Grab + Allow Pose for interactivity. Avoid >50 PhysBone components per avatar.",
+    recommendedTools: ["scan_armature", "manage_component", "get_vrc_knowledge"],
+    requiredPackages: ["com.vrchat.avatars"],
+  },
+  {
+    id: "vrchat-expression-params",
+    name: "VRChat Expression Parameters",
+    category: "vrchat",
+    description: "VRCExpressionParameters budgeting, sync vs local, parameter cost.",
+    systemPrompt:
+      "256-bit budget. Bool=1, Int/Float=8 bits. Unsync purely cosmetic params (faceblend, BOOP, PAT). Synced params are visible to remote players. Always show current/256 and the largest synced parameters when asked to audit.",
+    recommendedTools: ["scan_avatar", "manage_scriptable_object"],
+    requiredPackages: ["com.vrchat.avatars"],
+  },
+  {
+    id: "osc-faceTracking",
+    name: "OSC Face Tracking (VRCFT)",
+    category: "vrchat",
+    description: "VRCFaceTracking + ARKit/MediaPipe param mapping + OSC.",
+    systemPrompt:
+      "VRCFaceTracking runs as a desktop companion app over OSC port 9000/9001. Avatar must declare matching FT_ float parameters in the expression menu. ARKit blendshape names: BrowDownLeft, EyeBlinkLeft, etc. Use UnifiedExpressions when possible. Consult get_install_guide for VRCFT for the latest VPM repo.",
+    recommendedTools: ["get_install_guide", "manage_component", "manage_scriptable_object"],
+    requiredPackages: ["com.vrchat.face-tracking"],
+  },
+  {
+    id: "fbt-stacks",
+    name: "Full-Body Tracking Stacks",
+    category: "vrchat",
+    description: "SlimeVR, Vive trackers, Space Calibrator, IMU drift correction.",
+    systemPrompt:
+      "SlimeVR is the open-source FBT tracker stack with auto-calibration. Space Calibrator aligns OpenVR-driven trackers (Vive, Tundra) with non-OpenVR (SlimeVR, Mocopi). Always calibrate playspace first, then arm/leg sync after a few frames of motion. See get_install_guide section 'FBT Stacks'.",
+    recommendedTools: ["get_install_guide", "get_vrc_knowledge"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-animator",
+    name: "Unity Animator State Machines",
+    category: "unity-core",
+    description: "AnimatorController layers, states, transitions, parameters.",
+    systemPrompt:
+      "Use manage_animator.get_layers / get_states / set_parameter. Float/Int/Bool/Trigger. Avoid transition Has Exit Time when responsiveness matters. Default state must exist on every layer.",
+    recommendedTools: ["manage_animator", "get_asset_info"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-navmesh",
+    name: "Unity NavMesh + Agents",
+    category: "unity-core",
+    description: "Bake nav surfaces, agents, off-mesh links.",
+    systemPrompt:
+      "Use unity_navmesh.bake after geometry is final. NavMeshAgent needs Radius/Height matching capsule. For dynamic obstacles use NavMeshObstacle with carve=true. Modern projects can switch to com.unity.ai.navigation package for runtime baking.",
+    recommendedTools: ["unity_navmesh", "manage_component"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-terrain",
+    name: "Unity Terrain",
+    category: "unity-core",
+    description: "Terrain creation, sculpting heights, terrain layers.",
+    systemPrompt:
+      "Default heightmap resolution 513, alphamap 512. Flat terrains start with SetHeights to zeros. Use Terrain Layers for ground textures (tiled by tileSize).",
+    recommendedTools: ["unity_terrain", "manage_component"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-timeline",
+    name: "Unity Timeline Sequencing",
+    category: "unity-core",
+    description: "PlayableDirector, tracks, signals, control clips.",
+    systemPrompt:
+      "PlayableDirector + TimelineAsset are the entry points. unity_timeline.detect first. Tracks: AnimationTrack, AudioTrack, SignalTrack, ControlTrack.",
+    recommendedTools: ["unity_timeline", "manage_component"],
+    requiredPackages: ["com.unity.timeline"],
+  },
+  {
+    id: "unity-testrunner",
+    name: "Unity Test Framework / TDD",
+    category: "unity-core",
+    description: "EditMode/PlayMode tests, NUnit assertions, CI integration.",
+    systemPrompt:
+      "Use run_tests then poll get_test_job until terminal. EditMode tests live in Editor asmdef with com.unity.test-framework reference + UnityEditor + nunit.framework + UnityEngine.TestRunner. PlayMode tests need [UnityTest] attribute returning IEnumerator.",
+    recommendedTools: ["run_tests", "get_test_job"],
+    requiredPackages: ["com.unity.test-framework"],
+  },
+  {
+    id: "csharp-pro",
+    name: "Modern C# Patterns",
+    category: "instruction",
+    description: "Records, pattern matching, Span<T>, value tuples, SOLID.",
+    systemPrompt:
+      "Target C# 9.0+. Use records for immutable DTOs, init-only setters, switch expressions, pattern matching. Avoid LINQ in hot paths. Prefer Span<T>/Memory<T> for buffers. Apply Single Responsibility per class.",
+    recommendedTools: ["manage_script", "validate_script", "inspect_type"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-async",
+    name: "Unity Async / Main-Thread Rules",
+    category: "instruction",
+    description: "Coroutines vs Tasks, CancellationToken, Unity API main-thread constraint.",
+    systemPrompt:
+      "Unity API calls MUST run on the main thread. Use awaitable Tasks with await Task.Yield() to resume on main thread in Unity 2023+. Otherwise use coroutines or UniTask. ALWAYS pass a CancellationToken. Never async void unless required by event handler.",
+    recommendedTools: ["manage_script", "execute_csharp"],
+    requiredPackages: [],
+  },
+  {
+    id: "unity-collection-pool",
+    name: "Zero-GC Collections",
+    category: "instruction",
+    description: "ListPool, DictionaryPool, HashSetPool, ArrayPool patterns.",
+    systemPrompt:
+      "Use UnityEngine.Pool.ListPool<T>.Get() / Release() to eliminate GC allocations in Update/FixedUpdate. ArrayPool<T>.Shared for byte buffers. Reuse Material/MaterialPropertyBlock to avoid renderer.material allocations.",
+    recommendedTools: ["manage_script"],
+    requiredPackages: [],
+  },
 ];
 
 export function listSkills(opts?: { category?: string; search?: string }): Skill[] {
