@@ -17,6 +17,8 @@ namespace AutonomousMcp.Editor
     internal static class AutonomousMcpToolDispatcher
     {
         private const int MaxBatchDepth = 3;
+        private const int DefaultDispatchTimeoutMs = 10_000;
+        private const int GeneratorDispatchTimeoutMs = 75_000; // > keyed request timeout (60s)
 
         // Names handled by the legacy switch below — used by list_tools_with_metadata to
         // expose pre-registry tools that haven't been moved to IMcpTool yet.
@@ -35,8 +37,18 @@ namespace AutonomousMcp.Editor
 
         public static AutonomousMcpToolResponse Dispatch(AutonomousMcpEnvelope envelope)
         {
-            return AutonomousMcpMainThread.Invoke(() => DispatchOnMainThread(envelope, 0));
+            return AutonomousMcpMainThread.Invoke(
+                () => DispatchOnMainThread(envelope, 0),
+                DispatchTimeoutMsFor(envelope?.tool));
         }
+
+        // Generation tools synchronously call image/audio providers on the editor main thread; a
+        // keyed HuggingFace gen can legitimately take ~40s, so give manage_generator headroom past
+        // its per-provider request timeouts. Every other tool keeps the snappy default so a wedged
+        // call can't freeze the editor. (Note: model3d's long Meshy poll is a separate concern and
+        // is NOT made reliable by this value — see the throttle finding's out-of-scope section.)
+        internal static int DispatchTimeoutMsFor(string toolName) =>
+            toolName == "manage_generator" ? GeneratorDispatchTimeoutMs : DefaultDispatchTimeoutMs;
 
         internal static AutonomousMcpToolResponse DispatchOnMainThread(AutonomousMcpEnvelope envelope, int depth)
         {

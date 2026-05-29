@@ -104,6 +104,17 @@ namespace AutonomousMcp.Editor.Core
             }
         }
 
+        // Pure status→outcome mapping, unit-tested. 402 = quota/throttle (keyed providers too),
+        // treated as rate-limited (park/rotate) rather than a fatal bad-request.
+        public static HttpAttemptOutcome ClassifyHttpStatus(int status)
+        {
+            if (status == 429 || status == 402) return HttpAttemptOutcome.RateLimited;
+            if (status == 401 || status == 403) return HttpAttemptOutcome.AuthFailure;
+            if (status == 500 || status == 502 || status == 503 || status == 504 || status == 408)
+                return HttpAttemptOutcome.Transient;
+            return HttpAttemptOutcome.Fatal;
+        }
+
         private static HttpAttemptResult Classify(WebException we)
         {
             if (we.Response is HttpWebResponse er)
@@ -114,11 +125,13 @@ namespace AutonomousMcp.Editor.Core
                 using (var rs = er.GetResponseStream())
                     detail = Truncate(SafeText(ReadAll(rs)), 160);
 
-                if (status == 429) return new HttpAttemptResult { Outcome = HttpAttemptOutcome.RateLimited, RetryAfter = retryAfter, Detail = "429 " + detail };
-                if (status == 401 || status == 403) return new HttpAttemptResult { Outcome = HttpAttemptOutcome.AuthFailure, Detail = status + " " + detail };
-                if (status == 503 || status == 502 || status == 504 || status == 500 || status == 408)
-                    return new HttpAttemptResult { Outcome = HttpAttemptOutcome.Transient, RetryAfter = retryAfter, Detail = status + " " + detail };
-                return new HttpAttemptResult { Outcome = HttpAttemptOutcome.Fatal, Detail = status + " " + detail };
+                var outcome = ClassifyHttpStatus(status);
+                return new HttpAttemptResult
+                {
+                    Outcome = outcome,
+                    RetryAfter = (outcome == HttpAttemptOutcome.RateLimited || outcome == HttpAttemptOutcome.Transient) ? retryAfter : null,
+                    Detail = status + " " + detail
+                };
             }
             return new HttpAttemptResult { Outcome = HttpAttemptOutcome.Transient, Detail = we.Status + ": " + we.Message };
         }

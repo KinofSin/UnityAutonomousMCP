@@ -48,8 +48,16 @@ namespace AutonomousMcp.Editor.Core
     public static class FreeTierImageClient
     {
         private const int MaxAttemptsPerProvider = 4;
-        private const int RequestTimeoutMs = 90_000;
+        private const int KeyedRequestTimeoutMs = 60_000;    // HF FLUX is legitimately slow
+        private const int KeylessRequestTimeoutMs = 20_000;  // keyless throttle: fail fast
         private const string DefaultHfModel = "black-forest-labs/FLUX.1-schnell";
+
+        // Keyed (owned-key) providers get a longer budget; keyless (public) gets a short one so a
+        // throttled/held request gives up quickly. Both stay below the dispatch timeout
+        // (AutonomousMcpToolDispatcher.DispatchTimeoutMsFor) so the request — not the dispatcher —
+        // bounds how long the editor main thread can block.
+        internal static int RequestTimeoutMsFor(bool keyed) =>
+            keyed ? KeyedRequestTimeoutMs : KeylessRequestTimeoutMs;
 
         private sealed class Provider
         {
@@ -124,8 +132,23 @@ namespace AutonomousMcp.Editor.Core
                 }
             }
 
-            result.Error = "All image providers failed. Trace: " + string.Join(" | ", result.Attempts);
+            result.Error = ComposeFailureMessage(result.Attempts);
             return result;
+        }
+
+        // The keyless provider emits a trace containing this stable marker when it is throttled,
+        // so the final error can be made actionable without threading extra state through.
+        private const string KeylessThrottleMarker = "keyless-throttled";
+
+        internal static string ComposeFailureMessage(List<string> attempts)
+        {
+            var trace = string.Join(" | ", attempts);
+            foreach (var a in attempts)
+                if (a != null && a.IndexOf(KeylessThrottleMarker, StringComparison.OrdinalIgnoreCase) >= 0)
+                    return "Keyless image provider is rate-limited (Pollinations returns HTTP 402 / holds " +
+                           "the request on rapid repeats). Set GENERATOR_HF_TOKEN for reliable generation, " +
+                           "or retry in a minute. Trace: " + trace;
+            return "All image providers failed. Trace: " + trace;
         }
 
         // Returns a human-readable trace string for this provider; sets result.Bytes/Success on win.
@@ -170,8 +193,15 @@ namespace AutonomousMcp.Editor.Core
                         return $"{provider.Id}: ok ({ar.Bytes.Length} bytes)";
 
                     case AttemptOutcome.RateLimited:
-                        if (provider.RequiresKey) provider.KeyPool.ReportRateLimited(key, ar.RetryAfter, nowUtc);
-                        continue; // rotate to next key / retry
+                        if (provider.RequiresKey)
+                        {
+                            provider.KeyPool.ReportRateLimited(key, ar.RetryAfter, nowUtc);
+                            continue; // rotate to next key / retry
+                        }
+                        // Keyless: a 402/timeout is a per-IP throttle. Retrying immediately is futile
+                        // and just freezes the editor longer — bail with a marked trace.
+                        return $"{provider.Id}: {KeylessThrottleMarker} " +
+                               $"(402/timeout after {RequestTimeoutMsFor(false) / 1000}s) — {ar.Detail}";
 
                     case AttemptOutcome.AuthFailure:
                         if (provider.RequiresKey) provider.KeyPool.ReportAuthFailure(key, nowUtc);
@@ -284,8 +314,9 @@ namespace AutonomousMcp.Editor.Core
             }
 
             req.Method = method;
-            req.Timeout = RequestTimeoutMs;
-            req.ReadWriteTimeout = RequestTimeoutMs;
+            var timeoutMs = RequestTimeoutMsFor(hf);
+            req.Timeout = timeoutMs;
+            req.ReadWriteTimeout = timeoutMs;
             req.UserAgent = "AutonomousMCP-Generator/1.0";
             req.Accept = "image/*";
             if (!string.IsNullOrEmpty(key))
@@ -320,7 +351,7 @@ namespace AutonomousMcp.Editor.Core
             }
             catch (WebException we)
             {
-                return ClassifyWebException(we);
+                return ClassifyWebException(we, keyed: hf);
             }
             catch (Exception ex)
             {
@@ -328,7 +359,19 @@ namespace AutonomousMcp.Editor.Core
             }
         }
 
-        private static AttemptResult ClassifyWebException(WebException we)
+        // Pure status→outcome mapping, unit-tested. 402 = keyless quota/throttle (Pollinations),
+        // treated as rate-limited so callers can back off / surface a clear message rather than
+        // mislabeling it a fatal bad-request.
+        internal static AttemptOutcome ClassifyHttpStatus(int status)
+        {
+            if (status == 429 || status == 402) return AttemptOutcome.RateLimited;
+            if (status == 401 || status == 403) return AttemptOutcome.AuthFailure;
+            if (status == 500 || status == 502 || status == 503 || status == 504 || status == 408)
+                return AttemptOutcome.Transient;
+            return AttemptOutcome.Fatal;
+        }
+
+        private static AttemptResult ClassifyWebException(WebException we, bool keyed)
         {
             if (we.Response is HttpWebResponse er)
             {
@@ -338,14 +381,24 @@ namespace AutonomousMcp.Editor.Core
                 using (var rs = er.GetResponseStream())
                     detail = Truncate(SafeText(ReadAll(rs)), 160);
 
-                if (status == 429) return new AttemptResult { Outcome = AttemptOutcome.RateLimited, RetryAfter = retryAfter, Detail = "429 " + detail };
-                if (status == 401 || status == 403) return new AttemptResult { Outcome = AttemptOutcome.AuthFailure, Detail = status + " " + detail };
-                if (status == 503 || status == 502 || status == 504 || status == 500 || status == 408)
-                    return new AttemptResult { Outcome = AttemptOutcome.Transient, RetryAfter = retryAfter, Detail = status + " " + detail };
-                return new AttemptResult { Outcome = AttemptOutcome.Fatal, Detail = status + " " + detail };
+                var outcome = ClassifyHttpStatus(status);
+                return new AttemptResult
+                {
+                    Outcome = outcome,
+                    RetryAfter = (outcome == AttemptOutcome.RateLimited || outcome == AttemptOutcome.Transient) ? retryAfter : null,
+                    Detail = status + " " + detail
+                };
             }
-            // No HTTP response → network/timeout → transient.
-            return new AttemptResult { Outcome = AttemptOutcome.Transient, Detail = we.Status + ": " + we.Message };
+
+            // No HTTP response → socket timeout / network drop. For the keyless provider this is the
+            // signature "held request" of the per-IP throttle, so treat it as RateLimited (the caller
+            // bails fast instead of retrying a provider that will not answer). For a keyed provider a
+            // timeout is more likely a transient blip worth a backoff+retry.
+            return new AttemptResult
+            {
+                Outcome = keyed ? AttemptOutcome.Transient : AttemptOutcome.RateLimited,
+                Detail = we.Status + ": " + we.Message
+            };
         }
 
         // ── small utilities ──────────────────────────────────────────────────────────
