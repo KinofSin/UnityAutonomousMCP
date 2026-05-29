@@ -90,9 +90,13 @@ namespace AutonomousMcp.Editor.Generators
                 case "rotate":
                 {
                     var axis = OptString(opts, "axis", "y").ToLowerInvariant();
-                    var prop = axis == "x" ? "localEulerAngles.x"
-                        : axis == "z" ? "localEulerAngles.z"
-                        : "localEulerAngles.y";
+                    // Use the *Raw* Euler binding: "localEulerAngles.*" lands only in the editor-only
+                    // m_EulerEditorCurves channel (no runtime rotation, not returned by
+                    // GetCurveBindings), whereas "localEulerAnglesRaw.*" authors the real runtime
+                    // m_EulerCurves so the clip actually rotates the Transform.
+                    var prop = axis == "x" ? "localEulerAnglesRaw.x"
+                        : axis == "z" ? "localEulerAnglesRaw.z"
+                        : "localEulerAnglesRaw.y";
                     var curve = AnimationCurve.Linear(0f, 0f, duration, 360f);
                     SetFloat(clip, path, prop, curve);
                     return 1;
