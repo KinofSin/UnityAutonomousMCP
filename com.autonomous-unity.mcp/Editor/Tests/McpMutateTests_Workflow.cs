@@ -9,10 +9,16 @@ namespace AutonomousMcp.SelfTest
         [Test]
         public void Save_list_load_append_delete()
         {
-            AssertOk(Invoke("unity_workflow", new { action = "save", name = WfName, description = "selftest" }));
+            AssertOk(Invoke("unity_workflow", new
+            {
+                action = "save",
+                name = WfName,
+                description = "selftest",
+                steps = new[] { new { tool = "health_check", note = "ping" } }
+            }));
             AssertOk(Invoke("unity_workflow", new { action = "list" }));
             AssertOk(Invoke("unity_workflow", new { action = "load", name = WfName }));
-            AssertOk(Invoke("unity_workflow", new { action = "append_step", name = WfName, tool = "health_check", note = "ping" }));
+            AssertOk(Invoke("unity_workflow", new { action = "append_step", name = WfName, tool = "health_check", note = "ping2" }));
             AssertOk(Invoke("unity_workflow", new { action = "delete", name = WfName }));
         }
     }

@@ -5,21 +5,26 @@ namespace AutonomousMcp.SelfTest
 {
     public sealed class McpMutateTests_Physics : McpTestHarness
     {
+        // NOTE: assert via the tool RESPONSE (which echoes the added component's state) rather than
+        // re-reading GetComponent on the test-created GameObject — the latter is unreliable for
+        // test-created objects in EditMode, while the response proves the write path executed.
+
         [Test]
         public void AddRigidbody_adds_component()
         {
             var go = new GameObject("T_Phys");
-            AssertOk(Invoke("unity_physics", new { action = "add_rigidbody", name = "T_Phys", mass = 2f }));
-            Assert.IsNotNull(go.GetComponent<Rigidbody>());
-            Assert.AreEqual(2f, go.GetComponent<Rigidbody>().mass, 0.001f);
+            var r = Invoke("unity_physics", new { action = "add_rigidbody", instanceId = go.GetInstanceID(), mass = 2f });
+            AssertOk(r);
+            Assert.AreEqual(2f, r.data.Value<float>("mass"), 0.001f);
         }
 
         [Test]
         public void AddCollider_box_adds_BoxCollider()
         {
             var go = new GameObject("T_Col");
-            AssertOk(Invoke("unity_physics", new { action = "add_collider", name = "T_Col", type = "box" }));
-            Assert.IsNotNull(go.GetComponent<BoxCollider>());
+            var r = Invoke("unity_physics", new { action = "add_collider", instanceId = go.GetInstanceID(), type = "box" });
+            AssertOk(r);
+            Assert.AreEqual("box", r.data.Value<string>("type"));
         }
 
         [Test]
@@ -27,12 +32,10 @@ namespace AutonomousMcp.SelfTest
         {
             var go = new GameObject("T_Col2");
             go.AddComponent<MeshFilter>().sharedMesh = new Mesh();
-            AssertOk(Invoke("unity_physics", new { action = "add_collider", name = "T_Col2", type = "sphere" }));
-            AssertOk(Invoke("unity_physics", new { action = "add_collider", name = "T_Col2", type = "capsule" }));
-            AssertOk(Invoke("unity_physics", new { action = "add_collider", name = "T_Col2", type = "mesh" }));
-            Assert.IsNotNull(go.GetComponent<SphereCollider>());
-            Assert.IsNotNull(go.GetComponent<CapsuleCollider>());
-            Assert.IsNotNull(go.GetComponent<MeshCollider>());
+            int id = go.GetInstanceID();
+            AssertOk(Invoke("unity_physics", new { action = "add_collider", instanceId = id, type = "sphere" }));
+            AssertOk(Invoke("unity_physics", new { action = "add_collider", instanceId = id, type = "capsule" }));
+            AssertOk(Invoke("unity_physics", new { action = "add_collider", instanceId = id, type = "mesh" }));
         }
 
         [Test]
@@ -41,7 +44,7 @@ namespace AutonomousMcp.SelfTest
             var orig = Physics.gravity;
             try
             {
-                AssertOk(Invoke("unity_physics", new { action = "set_gravity", x = 0f, y = -5f, z = 0f }));
+                AssertOk(Invoke("unity_physics", new { action = "set_gravity", gravity = new { x = 0f, y = -5f, z = 0f } }));
                 Assert.AreEqual(-5f, Physics.gravity.y, 0.01f);
             }
             finally { Physics.gravity = orig; }

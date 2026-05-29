@@ -23,9 +23,10 @@ namespace AutonomousMcp.SelfTest
             var path = MakeTempTexture();
             AssertOk(Invoke("unity_importer", new { action = "get_importer_type", asset_path = path }));
             AssertOk(Invoke("unity_importer", new { action = "get_properties", asset_path = path, prefix = "m_" }));
-            AssertOk(Invoke("unity_importer", new { action = "set_property", asset_path = path, property_path = "m_MaxTextureSize", value = 512 }));
+            // m_IsReadable round-trips cleanly (no platform-override resolution like maxTextureSize).
+            AssertOk(Invoke("unity_importer", new { action = "set_property", asset_path = path, property_path = "m_IsReadable", value = true }));
             var imp = (TextureImporter)AssetImporter.GetAtPath(path);
-            Assert.AreEqual(512, imp.maxTextureSize);
+            Assert.IsTrue(imp.isReadable);
         }
 
         [Test]

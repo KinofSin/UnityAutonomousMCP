@@ -1,7 +1,9 @@
 using NUnit.Framework;
 using UnityEngine;
 using UnityEngine.UI;
+using UnityEngine.SceneManagement;
 using UnityEditor;
+using UnityEditor.SceneManagement;
 
 namespace AutonomousMcp.SelfTest
 {
@@ -21,7 +23,7 @@ namespace AutonomousMcp.SelfTest
             var orig = RenderSettings.ambientLight;
             try
             {
-                AssertOk(Invoke("unity_lighting", new { action = "set_ambient", r = 0.1f, g = 0.2f, b = 0.3f }));
+                AssertOk(Invoke("unity_lighting", new { action = "set_ambient", color = new { r = 0.1f, g = 0.2f, b = 0.3f, a = 1f } }));
                 AssertOk(Invoke("unity_lighting", new { action = "get_ambient" }));
             }
             finally { RenderSettings.ambientLight = orig; }
@@ -61,7 +63,7 @@ namespace AutonomousMcp.SelfTest
         public void AddAndRemovePersistent_listener()
         {
             Invoke("unity_ui", new { action = "create_canvas", name = "T_Canvas" });
-            Invoke("unity_ui", new { action = "create_button", name = "T_Btn" });
+            Invoke("unity_ui", new { action = "create_button", parent = "T_Canvas", name = "T_Btn" });
             var target = new GameObject("T_Target");
             target.AddComponent<McpTestTarget>();
 
@@ -80,7 +82,7 @@ namespace AutonomousMcp.SelfTest
             Assert.AreEqual(0, btn.onClick.GetPersistentEventCount());
         }
 
-        // ---- navmesh (mark floor Navigation Static so bake yields verts) ----
+        // ---- navmesh (bake needs a SAVED scene for its asset directory) ----
         [Test]
         public void Bake_then_clear_navmesh()
         {
@@ -88,6 +90,8 @@ namespace AutonomousMcp.SelfTest
             floor.name = "T_Floor";
             floor.transform.localScale = new Vector3(5, 1, 5);
             GameObjectUtility.SetStaticEditorFlags(floor, StaticEditorFlags.NavigationStatic);
+            // NavMesh bakes data next to the scene asset; the temp scene must be saved first.
+            EditorSceneManager.SaveScene(SceneManager.GetActiveScene(), TestFolder + "/_nav.unity");
 
             AssertOk(Invoke("unity_navmesh", new { action = "bake" }));
             AssertOk(Invoke("unity_navmesh", new { action = "info" }));
