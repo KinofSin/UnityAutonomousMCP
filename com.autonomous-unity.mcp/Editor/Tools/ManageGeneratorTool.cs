@@ -79,7 +79,7 @@ namespace AutonomousMcp.Editor.Tools
             var kindStr = args.Value<string>("kind");
             if (string.IsNullOrEmpty(kindStr))
                 return Err("'kind' is required (sprite|texture|material|cubemap|audio|animation|model|terrain_layer).");
-            if (!Enum.TryParse<GeneratorKind>(kindStr, ignoreCase: true, out var kind))
+            if (!TryParseKind(kindStr, out var kind))
                 return Err($"Unknown generator kind '{kindStr}'.");
 
             var prompt = args.Value<string>("prompt");
@@ -151,8 +151,7 @@ namespace AutonomousMcp.Editor.Tools
         private static AutonomousMcpToolResponse SetProvider(JObject args)
         {
             var kindStr = args.Value<string>("kind");
-            if (string.IsNullOrEmpty(kindStr) ||
-                !Enum.TryParse<GeneratorKind>(kindStr, ignoreCase: true, out var kind))
+            if (string.IsNullOrEmpty(kindStr) || !TryParseKind(kindStr, out var kind))
                 return Err("'kind' is required and must be a valid GeneratorKind.");
 
             var providerId = args.Value<string>("provider");
@@ -179,6 +178,21 @@ namespace AutonomousMcp.Editor.Tools
         }
 
         // ── Helpers ────────────────────────────────────────────────────────────────
+
+        /// <summary>
+        /// Parse a generator kind leniently: accepts the enum name in any case and tolerates
+        /// snake_case / kebab-case / spaced input (e.g. "terrain_layer", "Terrain Layer") by
+        /// stripping separators before matching. Plain enum names continue to work unchanged.
+        /// </summary>
+        private static bool TryParseKind(string raw, out GeneratorKind kind)
+        {
+            kind = default;
+            if (string.IsNullOrWhiteSpace(raw)) return false;
+            if (Enum.TryParse(raw, ignoreCase: true, out kind)) return true;
+
+            var normalized = raw.Replace("_", "").Replace("-", "").Replace(" ", "");
+            return Enum.TryParse(normalized, ignoreCase: true, out kind);
+        }
 
         private static AutonomousMcpToolResponse Ok(JToken data) =>
             new AutonomousMcpToolResponse { success = true, data = data, error = null };
