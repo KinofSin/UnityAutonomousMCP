@@ -756,3 +756,26 @@ git commit -m "test: mutate write-path self-test suite green; project pristine"
 - **Placeholder scan:** every test method has complete code with real action/param names read from source; no TBD/TODO.
 - **Type consistency:** all tests use `Invoke(string, object)` + `AssertOk(...)` from `McpTestHarness`; `McpTestSO`/`McpTestTarget` defined in Task 1 and used in T4/T5; tool/param names match the verified-facts section.
 - **Known soft spots flagged inline:** `m_MaxTextureSize` serialized name (test-data fix if wrong), `set_skybox`/Cinemachine/Timeline assert non-throwing (asset/package-dependent), build-defines API variant note.
+
+---
+
+## Execution results (2026-05-28, live Unity 2022.3.22f1, project: Leaf)
+
+Suite GREEN: all 31 runnable self-tests pass; switch_target [Explicit] skipped (1).
+(Project total 190 incl. 17 pre-existing YUCP package-test failures — unrelated.)
+
+Setup learnings (for re-running):
+- Package must be in Packages/manifest.json "testables" or the test asm never compiles.
+- Test asmdef must use explicit precompiledReferences (nunit.framework.dll +
+  Newtonsoft.Json.dll) + UnityEngine/UnityEditor.TestRunner refs — the
+  optionalUnityReferences/TestAssemblies style strips Newtonsoft.
+- run_tests over the MCP bridge loses the job on the domain reload that compiling a
+  NEW test asm triggers; once compiled, bridge runs complete cleanly. (Follow-up:
+  make AutonomousMcpTestJobs survive domain reload via SessionState.)
+
+Tool bugs found + fixed (root cause, not symptom):
+- unity_cleaner: orphan detection self-reference (GetDependencies includes self).
+- unity_physics: GetComponent ?? AddComponent fake-null pitfall.
+
+Pristine verified: Assets/_MCPSelfTest removed; active scene, Physics.gravity,
+scripting defines all restored to pre-run values.
