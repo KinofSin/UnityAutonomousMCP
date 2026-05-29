@@ -1,0 +1,12 @@
+{
+  "name": "AutonomousMcp.Editor.Tests",
+  "references": [
+    "AutonomousMcp.Editor",
+    "UnityEngine.UI"
+  ],
+  "includePlatforms": ["Editor"],
+  "optionalUnityReferences": ["TestAssemblies"],
+  "overrideReferences": false,
+  "autoReferenced": false,
+  "noEngineReferences": false
+}
