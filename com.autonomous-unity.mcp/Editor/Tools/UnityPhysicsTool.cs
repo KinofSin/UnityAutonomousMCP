@@ -38,7 +38,10 @@ namespace AutonomousMcp.Editor.Tools
         {
             var go = ResolveGo(args, out var err);
             if (go == null) return Err(err);
-            var rb = go.GetComponent<Rigidbody>() ?? go.AddComponent<Rigidbody>();
+            // NOTE: '??' does not honor Unity's overloaded == (fake-null), so use an explicit
+            // Unity-aware null check before AddComponent.
+            var rb = go.GetComponent<Rigidbody>();
+            if (rb == null) rb = go.AddComponent<Rigidbody>();
             rb.mass = args.Value<float?>("mass") ?? rb.mass;
             rb.useGravity = args.Value<bool?>("use_gravity") ?? rb.useGravity;
             rb.isKinematic = args.Value<bool?>("is_kinematic") ?? rb.isKinematic;
@@ -50,13 +53,14 @@ namespace AutonomousMcp.Editor.Tools
             var go = ResolveGo(args, out var err);
             if (go == null) return Err(err);
             var type = args.Value<string>("type") ?? "box";
+            // NOTE: '??' does not honor Unity's overloaded == (fake-null); use explicit checks.
             Collider c;
             switch (type.ToLowerInvariant())
             {
-                case "box": c = go.GetComponent<BoxCollider>() ?? go.AddComponent<BoxCollider>(); break;
-                case "sphere": c = go.GetComponent<SphereCollider>() ?? go.AddComponent<SphereCollider>(); break;
-                case "capsule": c = go.GetComponent<CapsuleCollider>() ?? go.AddComponent<CapsuleCollider>(); break;
-                case "mesh": c = go.GetComponent<MeshCollider>() ?? go.AddComponent<MeshCollider>(); break;
+                case "box": c = go.GetComponent<BoxCollider>(); if (c == null) c = go.AddComponent<BoxCollider>(); break;
+                case "sphere": c = go.GetComponent<SphereCollider>(); if (c == null) c = go.AddComponent<SphereCollider>(); break;
+                case "capsule": c = go.GetComponent<CapsuleCollider>(); if (c == null) c = go.AddComponent<CapsuleCollider>(); break;
+                case "mesh": c = go.GetComponent<MeshCollider>(); if (c == null) c = go.AddComponent<MeshCollider>(); break;
                 default: return Err($"Unknown collider type '{type}'. Use box|sphere|capsule|mesh.");
             }
             c.isTrigger = args.Value<bool?>("is_trigger") ?? c.isTrigger;

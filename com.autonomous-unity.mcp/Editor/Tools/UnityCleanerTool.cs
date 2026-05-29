@@ -62,7 +62,9 @@ namespace AutonomousMcp.Editor.Tools
                 if (!entryExts.Contains(ext)) continue;
                 foreach (var dep in AssetDatabase.GetDependencies(path, true))
                 {
-                    referenced.Add(dep);
+                    // GetDependencies includes the asset itself; a self-reference must not
+                    // make an otherwise-unreferenced entry asset (.asset/.mat/etc.) look "used".
+                    if (dep != path) referenced.Add(dep);
                 }
             }
 
