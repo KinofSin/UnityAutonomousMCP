@@ -1527,6 +1527,11 @@ namespace AutonomousMcp.Editor
                         return Error("Game view not available.");
                     }
                 }
+                else if (source == "window" || source == "editor")
+                {
+                    tex = CaptureEditorWindowTex(args, source, out var winErr);
+                    if (tex == null) return Error(winErr ?? "EditorWindow capture failed.");
+                }
                 else
                 {
                     var sceneView = SceneView.lastActiveSceneView;
@@ -1553,6 +1558,8 @@ namespace AutonomousMcp.Editor
                 if (tex == null)
                     return Error("Failed to capture screenshot.");
 
+                var actualW = tex.width;
+                var actualH = tex.height;
                 var png = tex.EncodeToPNG();
                 UnityEngine.Object.DestroyImmediate(tex);
                 var base64 = Convert.ToBase64String(png);
@@ -1573,8 +1580,8 @@ namespace AutonomousMcp.Editor
                 return Success(JToken.FromObject(new
                 {
                     source,
-                    width,
-                    height,
+                    width = actualW,
+                    height = actualH,
                     sizeBytes = png.Length,
                     savedTo = string.IsNullOrWhiteSpace(savePath) ? null : savePath,
                     base64png = base64
@@ -1584,6 +1591,103 @@ namespace AutonomousMcp.Editor
             {
                 if (tex != null) UnityEngine.Object.DestroyImmediate(tex);
                 return Error($"Screenshot capture failed: {ex.Message}");
+            }
+        }
+
+        // Capture an EditorWindow's pixels via reflection on GUIView.GrabPixels. `source:"window"`
+        // targets a window by title/type substring (args.window / args.title); `source:"editor"` (or
+        // an empty query) captures the focused window. This lets the bridge screenshot editor UI —
+        // the Settings/Skills tab, Package Manager, Project, Console — which the camera-based Scene/
+        // Game capture cannot. NOTE: Unity must have rendered the window at least once; a backgrounded
+        // editor may yield a stale frame, so callers should ensure the target window is open/visible.
+        private static Texture2D CaptureEditorWindowTex(JObject args, string source, out string error)
+        {
+            error = null;
+            try
+            {
+                var query = args.Value<string>("window") ?? args.Value<string>("title");
+                var all = Resources.FindObjectsOfTypeAll<EditorWindow>();
+                EditorWindow target = null;
+
+                if (source != "editor" && !string.IsNullOrEmpty(query))
+                {
+                    foreach (var win in all)
+                    {
+                        if (win == null) continue;
+                        var title = win.titleContent != null ? (win.titleContent.text ?? string.Empty) : string.Empty;
+                        if (title.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0 ||
+                            win.GetType().Name.IndexOf(query, StringComparison.OrdinalIgnoreCase) >= 0)
+                        { target = win; break; }
+                    }
+                    if (target == null)
+                    {
+                        var avail = new List<string>();
+                        foreach (var x in all)
+                        {
+                            if (x != null && x.titleContent != null && !string.IsNullOrEmpty(x.titleContent.text) && !avail.Contains(x.titleContent.text))
+                                avail.Add(x.titleContent.text);
+                        }
+                        error = "No open EditorWindow matched '" + query + "'. Open it first. Available: " + string.Join(", ", avail);
+                        return null;
+                    }
+                }
+                else
+                {
+                    target = EditorWindow.focusedWindow ?? (all.Length > 0 ? all[0] : null);
+                    if (target == null) { error = "No EditorWindow available to capture."; return null; }
+                }
+
+                target.Repaint();
+
+                var parentField = typeof(EditorWindow).GetField("m_Parent", BindingFlags.NonPublic | BindingFlags.Instance);
+                var hostView = parentField?.GetValue(target);
+                if (hostView == null) { error = "Could not access the window's host view (m_Parent)."; return null; }
+
+                var hvType = hostView.GetType();
+                var posProp = hvType.GetProperty("position", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (posProp == null) { error = "Host view exposes no 'position'."; return null; }
+                var rect = (Rect)posProp.GetValue(hostView);
+                int w = Mathf.Clamp((int)rect.width, 16, 4096);
+                int h = Mathf.Clamp((int)rect.height, 16, 4096);
+
+                MethodInfo grab = null;
+                foreach (var m in hvType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    if (m.Name != "GrabPixels") continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length == 2 && ps[0].ParameterType == typeof(RenderTexture) && ps[1].ParameterType == typeof(Rect))
+                    { grab = m; break; }
+                }
+                if (grab == null) { error = "GUIView.GrabPixels(RenderTexture, Rect) not found on this Unity version."; return null; }
+
+                var rt = new RenderTexture(w, h, 24);
+                var prev = RenderTexture.active;
+                try
+                {
+                    grab.Invoke(hostView, new object[] { rt, new Rect(0, 0, w, h) });
+                    RenderTexture.active = rt;
+                    var tex = new Texture2D(w, h, TextureFormat.RGB24, false);
+                    tex.ReadPixels(new Rect(0, 0, w, h), 0, 0);
+                    tex.Apply();
+                    // GrabPixels yields a bottom-up image; flip vertically to normal screen orientation.
+                    var srcPx = tex.GetPixels();
+                    var dstPx = new Color[srcPx.Length];
+                    for (int row = 0; row < h; row++)
+                        System.Array.Copy(srcPx, row * w, dstPx, (h - 1 - row) * w, w);
+                    tex.SetPixels(dstPx);
+                    tex.Apply();
+                    return tex;
+                }
+                finally
+                {
+                    RenderTexture.active = prev;
+                    UnityEngine.Object.DestroyImmediate(rt);
+                }
+            }
+            catch (Exception ex)
+            {
+                error = "EditorWindow capture failed: " + ex.GetType().Name + ": " + ex.Message;
+                return null;
             }
         }
 

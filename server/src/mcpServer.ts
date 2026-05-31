@@ -263,11 +263,14 @@ function registerAllTools(server: McpServer): void {
 
   server.tool(
     "capture_screenshot",
-    "Capture a screenshot of the Unity Scene view or Game view as PNG. Returns base64-encoded image.",
+    "Capture a PNG of the Unity Scene/Game view, a specific EditorWindow, or the whole editor. Returns base64 image (and the real captured dimensions).",
     {
-      source: z.enum(["scene", "game"]).optional().describe("Which view to capture (default: scene)"),
-      width: z.number().int().min(64).max(2048).optional().describe("Image width in pixels (default: 512)"),
-      height: z.number().int().min(64).max(2048).optional().describe("Image height in pixels (default: 512)"),
+      source: z.enum(["scene", "game", "window", "editor"]).optional()
+        .describe("scene|game = camera view; window = a specific EditorWindow (see `window`); editor = the whole Unity main window. Default: scene"),
+      window: z.string().optional()
+        .describe("For source='window': EditorWindow title or type to capture (substring match), e.g. 'Autonomous MCP', 'Package Manager', 'Project', 'Console', 'Inspector'"),
+      width: z.number().int().min(64).max(2048).optional().describe("Image width for scene/game (default 512; ignored for window/editor, which use the real window size)"),
+      height: z.number().int().min(64).max(2048).optional().describe("Image height for scene/game (default 512; ignored for window/editor)"),
       save_path: z.string().optional().describe("Optional file path to save the PNG (e.g. 'Assets/Screenshots/shot.png')"),
     },
     async (input) => callUnity("capture_screenshot", input)
