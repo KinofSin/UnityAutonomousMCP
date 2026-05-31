@@ -1527,7 +1527,12 @@ namespace AutonomousMcp.Editor
                         return Error("Game view not available.");
                     }
                 }
-                else if (source == "window" || source == "editor")
+                else if (source == "editor")
+                {
+                    tex = CaptureMainEditorTex(out var edErr);
+                    if (tex == null) return Error(edErr ?? "Editor window capture failed.");
+                }
+                else if (source == "window")
                 {
                     tex = CaptureEditorWindowTex(args, source, out var winErr);
                     if (tex == null) return Error(winErr ?? "EditorWindow capture failed.");
@@ -1687,6 +1692,120 @@ namespace AutonomousMcp.Editor
             catch (Exception ex)
             {
                 error = "EditorWindow capture failed: " + ex.GetType().Name + ": " + ex.Message;
+                return null;
+            }
+        }
+
+        // Capture the ENTIRE Unity main editor window by compositing every dock-area GUIView
+        // (the whole window has no single GUIView). Useful for diagnosing layout / "where did this
+        // package land" / install issues at a glance.
+        private static Texture2D CaptureMainEditorTex(out string error)
+        {
+            error = null;
+            try
+            {
+                var asm = typeof(EditorWindow).Assembly;
+                var cwType = asm.GetType("UnityEditor.ContainerWindow");
+                var viewType = asm.GetType("UnityEditor.View");
+                var guiViewType = asm.GetType("UnityEditor.GUIView");
+                if (cwType == null || viewType == null || guiViewType == null) { error = "ContainerWindow/View/GUIView types not found."; return null; }
+
+                var windows = cwType.GetProperty("windows", BindingFlags.Public | BindingFlags.Static)?.GetValue(null) as System.Array;
+                if (windows == null) { error = "ContainerWindow.windows unavailable."; return null; }
+
+                var showModeField = cwType.GetField("m_ShowMode", BindingFlags.NonPublic | BindingFlags.Instance);
+                var cwPosProp = cwType.GetProperty("position", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                object mainCw = null, largest = null; float bestArea = -1f;
+                foreach (var cw in windows)
+                {
+                    if (cw == null) continue;
+                    try { if (showModeField != null && Convert.ToInt32(showModeField.GetValue(cw)) == 4) { mainCw = cw; break; } } catch { }
+                    try { var p = (Rect)cwPosProp.GetValue(cw); var a = p.width * p.height; if (a > bestArea) { bestArea = a; largest = cw; } } catch { }
+                }
+                if (mainCw == null) mainCw = largest;
+                if (mainCw == null) { error = "Main editor window not found."; return null; }
+
+                var rootView = cwType.GetProperty("rootView", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance)?.GetValue(mainCw);
+                if (rootView == null) { error = "Main window rootView unavailable."; return null; }
+
+                var screenPosProp = viewType.GetProperty("screenPosition", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                var allChildrenProp = viewType.GetProperty("allChildren", BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance);
+                if (screenPosProp == null || allChildrenProp == null) { error = "View.screenPosition/allChildren unavailable on this Unity version."; return null; }
+
+                var rootScreen = (Rect)screenPosProp.GetValue(rootView);
+                int W = Mathf.Clamp((int)rootScreen.width, 16, 8192);
+                int H = Mathf.Clamp((int)rootScreen.height, 16, 8192);
+
+                MethodInfo grab = null;
+                foreach (var m in guiViewType.GetMethods(BindingFlags.Public | BindingFlags.NonPublic | BindingFlags.Instance))
+                {
+                    if (m.Name != "GrabPixels") continue;
+                    var ps = m.GetParameters();
+                    if (ps.Length == 2 && ps[0].ParameterType == typeof(RenderTexture) && ps[1].ParameterType == typeof(Rect)) { grab = m; break; }
+                }
+                if (grab == null) { error = "GUIView.GrabPixels not found."; return null; }
+
+                var topdown = new Color[W * H]; // row 0 = top
+                var children = allChildrenProp.GetValue(rootView) as System.Array;
+                int painted = 0;
+                if (children != null)
+                {
+                    foreach (var child in children)
+                    {
+                        if (child == null || !guiViewType.IsInstanceOfType(child)) continue;
+                        var cs = (Rect)screenPosProp.GetValue(child);
+                        int cw = (int)cs.width, ch = (int)cs.height;
+                        if (cw <= 1 || ch <= 1) continue;
+                        int localX = (int)(cs.x - rootScreen.x);
+                        int localYTop = (int)(cs.y - rootScreen.y);
+
+                        RenderTexture rt = null; Texture2D ctex = null; var prev = RenderTexture.active;
+                        try
+                        {
+                            rt = new RenderTexture(cw, ch, 24);
+                            grab.Invoke(child, new object[] { rt, new Rect(0, 0, cw, ch) });
+                            RenderTexture.active = rt;
+                            ctex = new Texture2D(cw, ch, TextureFormat.RGB24, false);
+                            ctex.ReadPixels(new Rect(0, 0, cw, ch), 0, 0);
+                            ctex.Apply();
+                            var cpx = ctex.GetPixels(); // bottom-up
+                            for (int prowTop = 0; prowTop < ch; prowTop++)
+                            {
+                                int dstRow = localYTop + prowTop;
+                                if (dstRow < 0 || dstRow >= H) continue;
+                                int srcRowBottom = ch - 1 - prowTop;
+                                int dstBase = dstRow * W, srcBase = srcRowBottom * cw;
+                                for (int col = 0; col < cw; col++)
+                                {
+                                    int dstCol = localX + col;
+                                    if (dstCol < 0 || dstCol >= W) continue;
+                                    topdown[dstBase + dstCol] = cpx[srcBase + col];
+                                }
+                            }
+                            painted++;
+                        }
+                        finally
+                        {
+                            RenderTexture.active = prev;
+                            if (rt != null) UnityEngine.Object.DestroyImmediate(rt);
+                            if (ctex != null) UnityEngine.Object.DestroyImmediate(ctex);
+                        }
+                    }
+                }
+                if (painted == 0) { error = "No GUIView dock areas could be captured from the main window."; return null; }
+
+                // Convert top-down composite to a bottom-up Unity texture (Texture2D pixel origin).
+                var finalPx = new Color[W * H];
+                for (int row = 0; row < H; row++)
+                    System.Array.Copy(topdown, row * W, finalPx, (H - 1 - row) * W, W);
+                var outTex = new Texture2D(W, H, TextureFormat.RGB24, false);
+                outTex.SetPixels(finalPx);
+                outTex.Apply();
+                return outTex;
+            }
+            catch (Exception ex)
+            {
+                error = "Main editor capture failed: " + ex.GetType().Name + ": " + ex.Message;
                 return null;
             }
         }
