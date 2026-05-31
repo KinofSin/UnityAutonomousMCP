@@ -182,6 +182,10 @@ namespace AutonomousMcp.Editor
                 package = "com.autonomous.unity.mcp",
                 unityVersion = Application.unityVersion,
                 projectPath = Application.dataPath,
+                // Changes on every domain reload — a changed stamp PROVES an edit recompiled/loaded;
+                // an unchanged stamp after an edit means a stale last-good assembly is still serving.
+                buildStamp = AutonomousMcpBuildStamp.Stamp,
+                compiledAtUtc = AutonomousMcpBuildStamp.CompiledAtUtc,
                 activeScene = new
                 {
                     name = scene.name,
