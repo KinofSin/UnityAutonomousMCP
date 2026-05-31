@@ -4267,16 +4267,34 @@ public static class __McpEval
         internal static AutonomousMcpToolResponse HandleRefreshUnity(JObject args)
         {
             var importAll = args.Value<bool?>("import_all") ?? false;
+            var recompile = args.Value<bool?>("recompile") ?? true;
 
             if (importAll)
                 AssetDatabase.Refresh(ImportAssetOptions.ForceUpdate);
             else
                 AssetDatabase.Refresh();
 
+            // AssetDatabase.Refresh alone does NOT reliably recompile changes to a file:-mounted
+            // (local) package, nor changes detected while the editor is unfocused — the compiler
+            // never sees the new source and the bridge keeps serving the stale last-good assembly.
+            // RequestScriptCompilation forces a real recompile of all script assemblies from the
+            // current on-disk source, which is what makes an edit actually go live over the bridge.
+            var requested = false;
+            if (recompile)
+            {
+                try
+                {
+                    UnityEditor.Compilation.CompilationPipeline.RequestScriptCompilation();
+                    requested = true;
+                }
+                catch { /* older API / unavailable — fall back to Refresh-only */ }
+            }
+
             return Success(JToken.FromObject(new
             {
                 action = "refresh",
                 importAll,
+                recompileRequested = requested,
                 isCompiling = EditorApplication.isCompiling
             }));
         }

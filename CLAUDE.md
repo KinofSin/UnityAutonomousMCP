@@ -18,6 +18,7 @@ Unity-side has **no headless test harness** — verify by opening the project in
 - Transport host binds **HTTP 127.0.0.1:8080** (`POST /mcp/tool` body `{"tool","params"}`) and TCP 8081, only when `AutoConnect` is on.
 - **Registry tools** go through the permission gate; **legacy switch tools** bypass it.
 - Run tests over the bridge: `refresh_unity` → `run_tests {mode:"editmode"}` → poll `get_test_job` (jobs are SessionState-persisted, so they survive the domain reloads a run triggers).
+- **CRITICAL — editing this package over the bridge does NOT pick up source changes.** The package is `file:`-mounted into Leaf from the repo, and Unity never *imports* changes to an external local-package folder: `AssetDatabase.Refresh` AND `CompilationPipeline.RequestScriptCompilation()` both recompile from Unity's **cached** copy, so the bridge keeps serving the **stale last-good assembly** and `get_compilation_errors` reports false-clean. Only a **package re-resolution** re-reads the source from disk — triggered by a Package Manager op (add/remove/Refresh in the PM window), a manifest change on editor focus, or a **Unity restart**. Verified 2026-05-31 by injecting a deliberate compile error that stayed undetected through refresh+recompile until a package op forced re-resolve. **Prove an edit is live before trusting any verification** (e.g. a build-stamp in `health_check`, or a deliberate-error probe). A junction/symlink embed of the package under `Leaf/Packages/` (instead of `file:`) would restore normal live-iteration — open question.
 
 ## Architecture
 - `Editor/Core/ToolRegistry.cs` — registry-first dispatch; legacy switch in `AutonomousMcpToolDispatcher.cs` is the fallback.
@@ -42,5 +43,5 @@ Unity-side has **no headless test harness** — verify by opening the project in
 
 ## Branch / remote model
 - `feat/unified-mcp` is the v2 mainline; public `origin` = `KinofSin/UnityAutonomousMCP`, private `private` = `KinofSin/UnityAutonomousMCP-v2` (pushed as `main`).
-- Commits are local; **pushes are manual** (the agent push-to-new-remote is classifier-blocked). Don't push unless asked.
+- Commit and push freely to the **private** remote (`private` = `KinofSin/UnityAutonomousMCP-v2`) when work is verified — the user authorized this once off the public repo (2026-05-31). The manual-only rule applied to the public `origin`; keep that care for any public push.
 - Live Unity test project: `C:\VRChatProjectsAlcom\Leaf`.

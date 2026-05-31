@@ -570,7 +570,10 @@ namespace AutonomousMcp.Editor.UI
             var path = ResolveSkillsIndexPath();
             if (string.IsNullOrEmpty(path))
             {
-                EditorGUILayout.HelpBox("Skills/index.json not found in the package.", MessageType.Warning);
+                var diag = BuildSkillsDiagnostic();
+                EditorGUILayout.HelpBox(diag, MessageType.Warning);
+                if (GUILayout.Button("Copy diagnostic to clipboard"))
+                    EditorGUIUtility.systemCopyBuffer = diag;
                 return;
             }
 
@@ -600,8 +603,68 @@ namespace AutonomousMcp.Editor.UI
             EditorGUILayout.EndScrollView();
         }
 
+        // Diagnostic shown in the Skills tab when index.json can't be resolved. The "v2" marker
+        // also confirms whether THIS build is live: if the old "...not found in the package" text
+        // shows instead of this, the editor is serving a stale assembly (deferred recompile).
+        private static string BuildSkillsDiagnostic()
+        {
+            var sb = new StringBuilder();
+            sb.AppendLine("MCP-SKILLS-DIAG v2 — Skills/index.json could not be resolved.");
+            try
+            {
+                var pkg = UnityEditor.PackageManager.PackageInfo.FindForAssembly(
+                    typeof(AutonomousMcpSettingsWindow).Assembly);
+                if (pkg == null)
+                {
+                    sb.AppendLine("FindForAssembly: NULL (assembly not mapped to a package)");
+                }
+                else
+                {
+                    var p = Path.Combine(pkg.resolvedPath ?? string.Empty, "Skills", "index.json");
+                    sb.AppendLine($"FindForAssembly: name={pkg.name} source={pkg.source}");
+                    sb.AppendLine($"  resolvedPath={pkg.resolvedPath}");
+                    sb.AppendLine($"  assetPath={pkg.assetPath}");
+                    sb.AppendLine($"  -> {p}  exists={File.Exists(p)}");
+                }
+            }
+            catch (Exception e) { sb.AppendLine("FindForAssembly threw: " + e.Message); }
+
+            var projectRoot = Path.GetDirectoryName(Application.dataPath) ?? string.Empty;
+            sb.AppendLine($"projectRoot={projectRoot}");
+            foreach (var c in new[]
+            {
+                Path.Combine(projectRoot, "Packages", "com.autonomous-unity.mcp", "Skills", "index.json"),
+                Path.Combine(projectRoot, "..", "com.autonomous-unity.mcp", "Skills", "index.json"),
+                Path.Combine(projectRoot, "com.autonomous-unity.mcp", "Skills", "index.json"),
+            })
+            {
+                string full; bool ex;
+                try { full = Path.GetFullPath(c); ex = File.Exists(full); }
+                catch (Exception e) { full = c + " (err: " + e.Message + ")"; ex = false; }
+                sb.AppendLine($"  candidate exists={ex}: {full}");
+            }
+            return sb.ToString();
+        }
+
         private static string ResolveSkillsIndexPath()
         {
+            // Primary: ask the Package Manager where THIS package actually resolves to.
+            // Robust to file:/embedded/registry mounts — e.g. a live project (Leaf) mounts us
+            // via a file: path OUTSIDE the project, so the project-root-relative guesses below
+            // never match and the Skills tab would wrongly show "not found".
+            try
+            {
+                var pkg = UnityEditor.PackageManager.PackageInfo.FindForAssembly(
+                    typeof(AutonomousMcpSettingsWindow).Assembly);
+                if (pkg != null && !string.IsNullOrEmpty(pkg.resolvedPath))
+                {
+                    var resolved = Path.Combine(pkg.resolvedPath, "Skills", "index.json");
+                    if (File.Exists(resolved)) return resolved;
+                }
+            }
+            catch { /* fall through to heuristics */ }
+
+            // Fallbacks for layouts the Package Manager can't resolve (loose copies, repo-as-project).
             var projectRoot = Path.GetDirectoryName(Application.dataPath) ?? string.Empty;
             var candidates = new[]
             {
