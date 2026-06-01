@@ -2124,9 +2124,80 @@ namespace AutonomousMcp.Editor
                     return HandleSetMaterialProperty(args);
                 case "list_materials":
                     return HandleListMaterials(args);
+                case "set_shader":
+                    return HandleSetMaterialShader(args);
+                case "assign_texture":
+                    return HandleAssignMaterialTexture(args);
                 default:
                     return Error($"Unsupported manage_material action '{action}'.");
             }
+        }
+
+        // Resolve a material ASSET by Assets/...mat path or by exact name (for editing .mat files,
+        // not renderer slots).
+        private static Material ResolveMaterialAsset(JObject args, out string error)
+        {
+            error = null;
+            var matRef = args.Value<string>("material") ?? args.Value<string>("materialPath");
+            if (string.IsNullOrWhiteSpace(matRef)) { error = "Provide 'material' (Assets/...mat path or exact name)."; return null; }
+
+            Material mat = null;
+            if (matRef.StartsWith("Assets/", StringComparison.Ordinal) && matRef.EndsWith(".mat", StringComparison.OrdinalIgnoreCase))
+                mat = AssetDatabase.LoadAssetAtPath<Material>(matRef);
+            if (mat == null)
+            {
+                var nameOnly = System.IO.Path.GetFileNameWithoutExtension(matRef);
+                foreach (var guid in AssetDatabase.FindAssets("t:Material " + nameOnly))
+                {
+                    var m = AssetDatabase.LoadAssetAtPath<Material>(AssetDatabase.GUIDToAssetPath(guid));
+                    if (m != null && string.Equals(m.name, nameOnly, StringComparison.OrdinalIgnoreCase)) { mat = m; break; }
+                }
+            }
+            if (mat == null) error = $"Material '{matRef}' not found (give an Assets/...mat path or exact name).";
+            return mat;
+        }
+
+        internal static AutonomousMcpToolResponse HandleSetMaterialShader(JObject args)
+        {
+            var mat = ResolveMaterialAsset(args, out var err);
+            if (mat == null) return Error(err);
+            var shaderName = args.Value<string>("shader");
+            if (string.IsNullOrWhiteSpace(shaderName)) return Error("set_shader requires 'shader' (e.g. '.poiyomi/Master/Opaque').");
+            var shader = Shader.Find(shaderName);
+            if (shader == null) return Error($"Shader '{shaderName}' not found. Use list_shaders to see available shaders.");
+            var prev = mat.shader != null ? mat.shader.name : "(none)";
+            mat.shader = shader; // texture slots with matching property names (e.g. _MainTex) carry over
+            EditorUtility.SetDirty(mat);
+            AssetDatabase.SaveAssets();
+            return Success(JToken.FromObject(new { action = "set_shader", material = mat.name, from = prev, to = shader.name }));
+        }
+
+        internal static AutonomousMcpToolResponse HandleAssignMaterialTexture(JObject args)
+        {
+            var mat = ResolveMaterialAsset(args, out var err);
+            if (mat == null) return Error(err);
+            var prop = args.Value<string>("property") ?? "_MainTex";
+            var texRef = args.Value<string>("texture");
+            if (string.IsNullOrWhiteSpace(texRef)) return Error("assign_texture requires 'texture' (Assets/... path or exact name).");
+
+            Texture tex = null;
+            if (texRef.StartsWith("Assets/", StringComparison.Ordinal))
+                tex = AssetDatabase.LoadAssetAtPath<Texture>(texRef);
+            if (tex == null)
+            {
+                var nameOnly = System.IO.Path.GetFileNameWithoutExtension(texRef);
+                foreach (var guid in AssetDatabase.FindAssets("t:Texture " + nameOnly))
+                {
+                    var t = AssetDatabase.LoadAssetAtPath<Texture>(AssetDatabase.GUIDToAssetPath(guid));
+                    if (t != null && string.Equals(t.name, nameOnly, StringComparison.OrdinalIgnoreCase)) { tex = t; break; }
+                }
+            }
+            if (tex == null) return Error($"Texture '{texRef}' not found.");
+            if (!mat.HasProperty(prop)) return Error($"Material '{mat.name}' has no property '{prop}'.");
+            mat.SetTexture(prop, tex);
+            EditorUtility.SetDirty(mat);
+            AssetDatabase.SaveAssets();
+            return Success(JToken.FromObject(new { action = "assign_texture", material = mat.name, property = prop, texture = tex.name }));
         }
 
         internal static AutonomousMcpToolResponse HandleGetMaterial(JObject args)
