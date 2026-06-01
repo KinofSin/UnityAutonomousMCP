@@ -32,7 +32,8 @@ namespace AutonomousMcp.Editor
             "manage_project_settings", "get_installed_packages", "list_shaders", "get_asset_info",
             "scan_armature", "scan_avatar", "manage_scriptable_object", "manage_texture",
             "refresh_unity", "list_menu_items", "inspect_type", "list_custom_tools",
-            "execute_custom_tool", "batch_execute", "hud_post", "hud_post_card", "hud_poll"
+            "execute_custom_tool", "batch_execute", "hud_post", "hud_post_card", "hud_poll",
+            "manage_project_template"
         };
 
         public static AutonomousMcpToolResponse Dispatch(AutonomousMcpEnvelope envelope)
@@ -119,6 +120,7 @@ namespace AutonomousMcp.Editor
                     case "hud_post":                   legacy = HandleHudPost(args); break;
                     case "hud_post_card":              legacy = HandleHudPostCard(args); break;
                     case "hud_poll":                   legacy = HandleHudPoll(args); break;
+                    case "manage_project_template":    legacy = HandleManageProjectTemplate(args); break;
                     case "manage_scene":               legacy = HandleManageScene(args); break;
                     case "manage_gameobject":          legacy = HandleManageGameObject(args); break;
                     case "manage_script":              legacy = HandleManageScript(args); break;
@@ -246,7 +248,8 @@ namespace AutonomousMcp.Editor
                     "batch_execute",
                     "hud_post",
                     "hud_post_card",
-                    "hud_poll"
+                    "hud_poll",
+                    "manage_project_template"
                 },
                 supportedActions = new
                 {
@@ -4936,6 +4939,144 @@ public static class __McpEval
                     enqueuedAtUtc = i.enqueuedAtUtc
                 }).ToArray()
             }));
+        }
+
+        // ───────── manage_project_template ─────────
+
+        internal static AutonomousMcpToolResponse HandleManageProjectTemplate(JObject args)
+        {
+            var action = args.Value<string>("action") ?? "inspect";
+            switch (action)
+            {
+                case "list":
+                    return Success(JToken.FromObject(new { templates = new[] { "avatar-pc" } }));
+                case "inspect":
+                    return Success(JToken.FromObject(new { avatars = InspectScene() }));
+                case "apply":
+                    return Success(JToken.FromObject(ApplyTemplate(args)));
+                default:
+                    return Error($"manage_project_template: unknown action '{action}'.");
+            }
+        }
+
+        private static System.Collections.Generic.List<AutonomousMcp.Editor.Templates.InspectReport> InspectScene()
+        {
+            var reports = new System.Collections.Generic.List<AutonomousMcp.Editor.Templates.InspectReport>();
+            foreach (var go in EnumerateAvatarRoots())
+            {
+                var desc = AutonomousMcp.Editor.Templates.VrcReflection.GetDescriptor(go);
+                var state = new AutonomousMcp.Editor.Templates.AvatarState
+                {
+                    hasDescriptor       = desc != null,
+                    hasViewpoint        = AutonomousMcp.Editor.Templates.VrcReflection.HasViewpoint(desc),
+                    hasExpressionMenu   = AutonomousMcp.Editor.Templates.VrcReflection.HasExpressionMenu(desc),
+                    hasExpressionParams = AutonomousMcp.Editor.Templates.VrcReflection.HasExpressionParams(desc),
+                    hasFolders          = AssetDatabase.IsValidFolder(AvatarFolder(go.name)),
+                };
+                reports.Add(new AutonomousMcp.Editor.Templates.InspectReport
+                {
+                    avatarName = go.name,
+                    platform   = AutonomousMcp.Editor.Templates.ProjectTemplateEngine.ClassifyPlatform(go.name),
+                    isAvatar   = true,
+                    steps      = AutonomousMcp.Editor.Templates.ProjectTemplateEngine.ComputeSteps(state),
+                });
+            }
+            return reports;
+        }
+
+        // Top-level scene roots that look like avatars (humanoid Animator or a VRC descriptor).
+        private static System.Collections.Generic.IEnumerable<GameObject> EnumerateAvatarRoots()
+        {
+            var scene = SceneManager.GetActiveScene();
+            foreach (var root in scene.GetRootGameObjects())
+            {
+                var animator = root.GetComponent<Animator>();
+                if (AutonomousMcp.Editor.Templates.VrcReflection.GetDescriptor(root) != null ||
+                    (animator != null && animator.isHuman))
+                    yield return root;
+            }
+        }
+
+        private static string AvatarFolder(string avatarName)
+        {
+            var safe = string.Join("_", avatarName.Split(System.IO.Path.GetInvalidFileNameChars()));
+            return "Assets/_Project/" + safe;
+        }
+
+        private static AutonomousMcp.Editor.Templates.ApplyResult ApplyTemplate(JObject args)
+        {
+            var targetName = args.Value<string>("avatar");
+            var result = new AutonomousMcp.Editor.Templates.ApplyResult();
+
+            GameObject avatar = null;
+            foreach (var go in EnumerateAvatarRoots())
+                if (string.IsNullOrEmpty(targetName) || go.name == targetName) { avatar = go; break; }
+            if (avatar == null) { result.notes.Add("No avatar found in the active scene."); return result; }
+            result.avatarName = avatar.name;
+
+            // 1) Folders (no SDK needed) — idempotent.
+            var folder = AvatarFolder(avatar.name);
+            if (!AssetDatabase.IsValidFolder(folder))
+            {
+                EnsureFolderPath(folder);
+                result.changed.Add("Created folders under " + folder);
+            }
+            else result.skipped.Add("Folders already present");
+
+            if (!AutonomousMcp.Editor.Templates.VrcReflection.SdkPresent)
+            {
+                result.skipped.Add("VRChat SDK not detected — skipped descriptor/expressions");
+                result.notes.Add("Install the VRChat SDK (via the Creator Companion) for avatar components.");
+                AssetDatabase.Refresh();
+                return result;
+            }
+
+            // 2) Descriptor (idempotent add).
+            var desc = AutonomousMcp.Editor.Templates.VrcReflection.GetDescriptor(avatar);
+            if (desc == null)
+            {
+                desc = AutonomousMcp.Editor.Templates.VrcReflection.AddDescriptor(avatar);
+                result.changed.Add("Added VRC Avatar Descriptor");
+            }
+            else result.skipped.Add("Descriptor already present");
+
+            // 3) Viewpoint (only if unset).
+            if (!AutonomousMcp.Editor.Templates.VrcReflection.HasViewpoint(desc))
+            {
+                if (AutonomousMcp.Editor.Templates.VrcReflection.SetDefaultViewpoint(avatar, desc))
+                    result.changed.Add("Set default viewpoint");
+            }
+            else result.skipped.Add("Viewpoint already set");
+
+            // 4) Expressions (only if missing).
+            if (!AutonomousMcp.Editor.Templates.VrcReflection.HasExpressionMenu(desc) ||
+                !AutonomousMcp.Editor.Templates.VrcReflection.HasExpressionParams(desc))
+            {
+                var exprFolder = folder + "/Expressions";
+                EnsureFolderPath(exprFolder);
+                if (AutonomousMcp.Editor.Templates.VrcReflection.CreateAndLinkExpressions(desc, exprFolder, out var note))
+                    result.changed.Add("Created + linked Expression Menu/Parameters");
+                else if (note != null) result.notes.Add(note);
+            }
+            else result.skipped.Add("Expression assets already present");
+
+            AssetDatabase.SaveAssets();
+            AssetDatabase.Refresh();
+            return result;
+        }
+
+        // Create "Assets/A/B/C" one segment at a time (CreateFolder needs each parent to exist).
+        private static void EnsureFolderPath(string assetPath)
+        {
+            if (AssetDatabase.IsValidFolder(assetPath)) return;
+            var parts = assetPath.Split('/');
+            var cur = parts[0]; // "Assets"
+            for (int i = 1; i < parts.Length; i++)
+            {
+                var next = cur + "/" + parts[i];
+                if (!AssetDatabase.IsValidFolder(next)) AssetDatabase.CreateFolder(cur, parts[i]);
+                cur = next;
+            }
         }
 
         private static AutonomousMcpToolResponse Success(JToken data)

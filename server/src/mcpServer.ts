@@ -161,6 +161,18 @@ function registerAllTools(server: McpServer): void {
     async () => callUnity("hud_poll", {})
   );
 
+  // ── manage_project_template ──
+
+  server.tool(
+    "manage_project_template",
+    "Set up a VRChat avatar project to a pro baseline. inspect = report each avatar's state (PC/Quest) and what's missing; list = available templates; apply = idempotently add the missing foundation (VRC descriptor + viewpoint, Expression Menu/Parameters, project folders). Non-destructive; skips VRChat-SDK steps with a note if the SDK isn't present.",
+    {
+      action: z.enum(["inspect", "list", "apply"]).describe("inspect (read-only) | list | apply"),
+      avatar: z.string().optional().describe("For apply: avatar root name (defaults to the first avatar found)"),
+    },
+    async (input) => callUnity("manage_project_template", input)
+  );
+
   // ── read_console ──
 
   server.tool(
