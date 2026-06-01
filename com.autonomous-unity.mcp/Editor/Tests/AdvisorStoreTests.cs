@@ -58,6 +58,20 @@ namespace AutonomousMcp.SelfTest
         }
 
         [Test]
+        public void AddCard_stores_card_with_actions()
+        {
+            AdvisorStore.AddCard("c1", "No visemes", "explanation",
+                new System.Collections.Generic.List<CardAction> { new CardAction { id = "approve", label = "Approve fix" } });
+            var all = AdvisorStore.GetAdvice();
+            Assert.AreEqual(1, all.Count);
+            Assert.AreEqual("card", all[0].kind);
+            Assert.AreEqual("c1", all[0].id);
+            Assert.AreEqual("No visemes", all[0].title);
+            Assert.AreEqual(1, all[0].actions.Count);
+            Assert.AreEqual("approve", all[0].actions[0].id);
+        }
+
+        [Test]
         public void State_round_trips_through_SessionState()
         {
             AdvisorStore.AddText("persisted advice", "info");

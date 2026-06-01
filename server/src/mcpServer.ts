@@ -142,6 +142,19 @@ function registerAllTools(server: McpServer): void {
   );
 
   server.tool(
+    "hud_post_card",
+    "Post an action card to the Advisor HUD: a plain-language explanation plus buttons the user can click. Approve relays consent — YOU then perform the fix with your tools (under the user's Ask/Agent permissions). Omit actions to get default Approve/Why/Dismiss.",
+    {
+      title: z.string().min(1).describe("Short headline, e.g. 'Your avatar has no visemes set up'"),
+      body: z.string().optional().describe("Plain-language explanation a novice understands"),
+      id: z.string().optional().describe("Stable card id (echoed back in the card_action you receive on Approve)"),
+      actions: z.array(z.object({ id: z.string(), label: z.string() })).optional()
+        .describe("Buttons; default Approve/Why/Dismiss"),
+    },
+    async (input) => callUnity("hud_post_card", input)
+  );
+
+  server.tool(
     "hud_poll",
     "Drain the Advisor HUD outbox: returns everything the user sent from Unity (notes, selection, console errors) and clears the queue. Call this when a tool response shows hudOutbox.pending > 0, or when the user says they sent something.",
     {},

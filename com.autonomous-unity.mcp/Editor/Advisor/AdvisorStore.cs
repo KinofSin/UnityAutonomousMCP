@@ -69,6 +69,23 @@ namespace AutonomousMcp.Editor.Advisor
             return new List<AdviceItem>(_advice);
         }
 
+        public static void AddCard(string id, string title, string body, List<CardAction> actions)
+        {
+            EnsureLoaded();
+            _advice.Add(new AdviceItem
+            {
+                id = string.IsNullOrEmpty(id) ? Guid.NewGuid().ToString("N").Substring(0, 8) : id,
+                kind = "card",
+                level = "info",
+                title = title ?? string.Empty,
+                body = body ?? string.Empty,
+                actions = actions ?? new List<CardAction>(),
+                postedAtUtc = DateTime.UtcNow.ToString("o")
+            });
+            while (_advice.Count > MaxAdvice) _advice.RemoveAt(0);
+            PersistAdvice();
+        }
+
         // ── outbox (user -> AI) ──────────────────────────────────────────────────────
 
         public static void Enqueue(string type, string payloadJson)

@@ -32,7 +32,7 @@ namespace AutonomousMcp.Editor
             "manage_project_settings", "get_installed_packages", "list_shaders", "get_asset_info",
             "scan_armature", "scan_avatar", "manage_scriptable_object", "manage_texture",
             "refresh_unity", "list_menu_items", "inspect_type", "list_custom_tools",
-            "execute_custom_tool", "batch_execute", "hud_post", "hud_poll"
+            "execute_custom_tool", "batch_execute", "hud_post", "hud_post_card", "hud_poll"
         };
 
         public static AutonomousMcpToolResponse Dispatch(AutonomousMcpEnvelope envelope)
@@ -117,6 +117,7 @@ namespace AutonomousMcp.Editor
                     case "health_check":               legacy = HandleHealthCheck(args); break;
                     case "read_console":               legacy = HandleReadConsole(args); break;
                     case "hud_post":                   legacy = HandleHudPost(args); break;
+                    case "hud_post_card":              legacy = HandleHudPostCard(args); break;
                     case "hud_poll":                   legacy = HandleHudPoll(args); break;
                     case "manage_scene":               legacy = HandleManageScene(args); break;
                     case "manage_gameobject":          legacy = HandleManageGameObject(args); break;
@@ -244,6 +245,7 @@ namespace AutonomousMcp.Editor
                     "execute_custom_tool",
                     "batch_execute",
                     "hud_post",
+                    "hud_post_card",
                     "hud_poll"
                 },
                 supportedActions = new
@@ -4896,6 +4898,29 @@ public static class __McpEval
             var level = args.Value<string>("level") ?? "info";
             AutonomousMcp.Editor.Advisor.AdvisorStore.AddText(text, level);
             return Success(JToken.FromObject(new { posted = true, level }));
+        }
+
+        internal static AutonomousMcpToolResponse HandleHudPostCard(JObject args)
+        {
+            var title = args.Value<string>("title");
+            if (string.IsNullOrWhiteSpace(title))
+                return Error("hud_post_card requires non-empty 'title'.");
+            var id = args.Value<string>("id");
+            var body = args.Value<string>("body") ?? string.Empty;
+
+            var actions = new System.Collections.Generic.List<AutonomousMcp.Editor.Advisor.CardAction>();
+            if (args["actions"] is JArray arr)
+                foreach (var a in arr)
+                    actions.Add(new AutonomousMcp.Editor.Advisor.CardAction
+                    { id = a.Value<string>("id"), label = a.Value<string>("label") });
+            if (actions.Count == 0)
+            {
+                actions.Add(new AutonomousMcp.Editor.Advisor.CardAction { id = "approve", label = "Approve" });
+                actions.Add(new AutonomousMcp.Editor.Advisor.CardAction { id = "why", label = "Why?" });
+                actions.Add(new AutonomousMcp.Editor.Advisor.CardAction { id = "dismiss", label = "Dismiss" });
+            }
+            AutonomousMcp.Editor.Advisor.AdvisorStore.AddCard(id, title, body, actions);
+            return Success(JToken.FromObject(new { posted = true, actionCount = actions.Count }));
         }
 
         internal static AutonomousMcpToolResponse HandleHudPoll(JObject args)
