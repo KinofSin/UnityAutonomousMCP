@@ -49,7 +49,10 @@ namespace AutonomousMcp.Editor
         // call can't freeze the editor. (Note: model3d's long Meshy poll is a separate concern and
         // is NOT made reliable by this value — see the throttle finding's out-of-scope section.)
         internal static int DispatchTimeoutMsFor(string toolName) =>
-            toolName == "manage_generator" ? GeneratorDispatchTimeoutMs : DefaultDispatchTimeoutMs;
+            // manage_project_template's settings-apply can change color space, which reimports all
+            // assets — give it the same headroom as generation so it doesn't spuriously time out.
+            (toolName == "manage_generator" || toolName == "manage_project_template")
+                ? GeneratorDispatchTimeoutMs : DefaultDispatchTimeoutMs;
 
         internal static AutonomousMcpToolResponse DispatchOnMainThread(AutonomousMcpEnvelope envelope, int depth)
         {
@@ -4956,9 +4959,36 @@ public static class __McpEval
                     return Success(JToken.FromObject(ApplyTemplate(args)));
                 case "notes":
                     return Success(InteractionNotes());
+                case "settings":
+                    return Success(JToken.FromObject(CheckOrApplySettings(args.Value<bool?>("apply") ?? false)));
                 default:
                     return Error($"manage_project_template: unknown action '{action}'.");
             }
+        }
+
+        // Read-only by default (apply == false): report current vs VRChat-recommended project
+        // settings. apply == true writes the recommended values (impactful — color space reimports
+        // all assets). Only the canonical "novices get this wrong" setting for now: color space.
+        private static object CheckOrApplySettings(bool apply)
+        {
+            var checks = new System.Collections.Generic.List<object>();
+            var changed = new System.Collections.Generic.List<string>();
+            var notes = new System.Collections.Generic.List<string>();
+
+            var current = PlayerSettings.colorSpace;
+            var ok = current == ColorSpace.Linear;
+            if (!ok && apply)
+            {
+                PlayerSettings.colorSpace = ColorSpace.Linear;
+                changed.Add("Color space: " + current + " -> Linear");
+                notes.Add("Changing color space reimports all assets — Unity may take a while.");
+            }
+            checks.Add(new { key = "colorSpace", current = current.ToString(), recommended = "Linear", ok });
+
+            if (apply && changed.Count == 0) notes.Add("All checked settings already at recommended values.");
+            if (!apply) notes.Add("Read-only. Pass { \"action\":\"settings\", \"apply\":true } to write (impactful — reimports assets).");
+
+            return new { applied = apply, checks, changed, notes };
         }
 
         private static JToken InteractionNotes()

@@ -167,8 +167,9 @@ function registerAllTools(server: McpServer): void {
     "manage_project_template",
     "Set up a VRChat avatar project to a pro baseline. inspect = report each avatar's state (PC/Quest, PC<->Quest twin, what's missing); list = templates; apply = idempotently add the missing foundation (VRC descriptor + viewpoint, Expression Menu/Parameters, project folders; scaffolds a starter avatar if the scene is empty); notes = package/prefab interaction knowledge (VRCFury/Modular Avatar/Poiyomi/Quest 'what messes with what'). Non-destructive; skips VRChat-SDK steps with a note if the SDK isn't present.",
     {
-      action: z.enum(["inspect", "list", "apply", "notes"]).describe("inspect (read-only) | list | apply | notes"),
+      action: z.enum(["inspect", "list", "apply", "notes", "settings"]).describe("inspect (read-only) | list | apply | notes | settings"),
       avatar: z.string().optional().describe("For apply: avatar root name (defaults to the first avatar found)"),
+      apply: z.boolean().optional().describe("For action=settings: false (default) = report current vs recommended (read-only); true = WRITE the recommended values (impactful — color space change reimports all assets)"),
     },
     async (input) => callUnity("manage_project_template", input)
   );
