@@ -9,7 +9,7 @@ namespace AutonomousMcp.Editor
     {
         private static readonly TestRunnerApi Api = ScriptableObject.CreateInstance<TestRunnerApi>();
 
-        public static string Run(string mode)
+        public static string Run(string mode, string testFilter = null, string category = null)
         {
             var normalized = string.Equals(mode, "playmode", StringComparison.OrdinalIgnoreCase)
                 ? "playmode"
@@ -23,6 +23,9 @@ namespace AutonomousMcp.Editor
             {
                 testMode = normalized == "playmode" ? TestMode.PlayMode : TestMode.EditMode
             };
+            // groupNames is a regex matched against the full test name; categoryNames matches [Category].
+            if (!string.IsNullOrWhiteSpace(testFilter)) filter.groupNames = new[] { testFilter };
+            if (!string.IsNullOrWhiteSpace(category)) filter.categoryNames = new[] { category };
 
             try
             {

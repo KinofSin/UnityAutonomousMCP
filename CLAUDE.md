@@ -17,7 +17,7 @@ Unity-side has **no headless test harness** — verify by opening the project in
 ## Bridge
 - Transport host binds **HTTP 127.0.0.1:8080** (`POST /mcp/tool` body `{"tool","params"}`) and TCP 8081, only when `AutoConnect` is on.
 - **Registry tools** go through the permission gate; **legacy switch tools** bypass it.
-- Run tests over the bridge: `refresh_unity` → `run_tests {mode:"editmode"}` → poll `get_test_job` (jobs are SessionState-persisted, so they survive the domain reloads a run triggers).
+- Run tests over the bridge: `refresh_unity` → `run_tests {mode:"editmode"}` → poll `get_test_job` (jobs are SessionState-persisted, so they survive the domain reloads a run triggers). `run_tests` also takes `testFilter` (regex over full test names, e.g. `"GeneratedAssetWriter"`) + `category` to run a subset.
 - **Dev loop — recompiling package edits in Leaf (SOLVED 2026-05-31 via junction embed).** The package is mounted into Leaf as an **embedded** package via a Windows directory **junction** `Leaf\Packages\com.autonomous.unity.mcp` → the repo's `com.autonomous-unity.mcp` folder (the old `file:` manifest entry was removed). Workflow: **edit in the repo → click into Unity → it recompiles from live source** (Auto Refresh is on in Leaf, so a focus alone compiles; `Ctrl+R` is the manual equivalent). Errors surface against the `Packages\com.autonomous.unity.mcp\…` path.
   - **Why the old `file:` mount failed:** Unity never *imported* changes to an external local-package folder — `AssetDatabase.Refresh` AND `CompilationPipeline.RequestScriptCompilation()` recompiled from Unity's **cached** copy, so only a full package re-resolution (PM op / restart) picked up edits.
   - **Still true:** Unity **defers compilation while unfocused**, so driving `refresh_unity` purely over the bridge (editor in background) will NOT compile — the user must focus Unity to apply edits, *then* verify over the bridge.
@@ -45,6 +45,7 @@ Unity-side has **no headless test harness** — verify by opening the project in
 
 ## Policies
 - **Generators are BYOK only.** Keys come from the user's own env vars (`GENERATOR_*`). HuggingFace = user's own tokens; Pollinations = a legitimate free *keyless public* API. **Never** harvest/scrape/rotate third-party API keys, and never drive the consumer ChatGPT/Claude web subscription via a browser session (it's not API-accessible; that's scraping) — refuse both outright.
+- **OpenAI BYOK provider** (`provider:"openai"`, `GENERATOR_OPENAI_API_KEY`): real texture/sprite/material via OpenAI images API; split into `OpenAiImageSource` (network, key-gated) + `GeneratedAssetWriter` (key-free, unit-tested) under `Editor/Generators/`. Coexists with `free-tier` (registry last-write-wins per Kind+ProviderId). gpt-image-1 default (dall-e-* adds `response_format:b64_json`).
 - **Reliable generation = BYOK HuggingFace** (`GENERATOR_HF_TOKEN`): account-based free quota with rotation/backoff already built. The keyless Pollinations path works **single-shot only** — it throttles rapid repeats per-IP (2nd request hangs, then HTTP 402). See `docs/superpowers/findings/2026-05-29-keyless-generation-throttle.md`. Single-shot gen works for Texture/Sprite/Material/Cubemap; Audio/Model3D/Animation/TerrainLayer were parallel-added and are unreviewed/unverified.
 
 ## Branch / remote model

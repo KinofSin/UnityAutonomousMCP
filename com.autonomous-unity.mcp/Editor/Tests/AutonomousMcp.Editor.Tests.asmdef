@@ -2,6 +2,7 @@
   "name": "AutonomousMcp.Editor.Tests",
   "references": [
     "AutonomousMcp.Editor",
+    "AutonomousMcp.Editor.Generators",
     "UnityEngine.UI",
     "UnityEngine.TestRunner",
     "UnityEditor.TestRunner"

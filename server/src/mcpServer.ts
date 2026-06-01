@@ -684,6 +684,8 @@ function registerAllTools(server: McpServer): void {
     "Run Unity Test Runner (EditMode or PlayMode tests). Returns a jobId to poll with get_test_job.",
     {
       mode: z.enum(["editmode", "playmode"]).optional().describe("Test mode (default: editmode)"),
+      testFilter: z.string().optional().describe("Regex matched against full test names to run a subset (e.g. 'GeneratedAssetWriter')"),
+      category: z.string().optional().describe("Only run tests with this [Category]"),
     },
     async (input) => callUnity("run_tests", input)
   );

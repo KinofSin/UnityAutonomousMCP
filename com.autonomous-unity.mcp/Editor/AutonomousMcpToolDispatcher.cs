@@ -4061,13 +4061,17 @@ public static class __McpEval
         internal static AutonomousMcpToolResponse HandleRunTests(JObject args)
         {
             var mode = args.Value<string>("mode") ?? "editmode";
+            var testFilter = args.Value<string>("testFilter");
+            var category = args.Value<string>("category");
 
             try
             {
-                var jobId = AutonomousMcpTestRunner.Run(mode);
+                var jobId = AutonomousMcpTestRunner.Run(mode, testFilter, category);
                 return Success(JToken.FromObject(new
                 {
                     mode,
+                    testFilter,
+                    category,
                     status = "queued",
                     jobId,
                     next = "Call get_test_job with jobId until status is completed/failed."
