@@ -2128,6 +2128,8 @@ namespace AutonomousMcp.Editor
                     return HandleSetMaterialShader(args);
                 case "assign_texture":
                     return HandleAssignMaterialTexture(args);
+                case "assign":
+                    return HandleAssignMaterialToRenderer(args);
                 default:
                     return Error($"Unsupported manage_material action '{action}'.");
             }
@@ -2198,6 +2200,53 @@ namespace AutonomousMcp.Editor
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
             return Success(JToken.FromObject(new { action = "assign_texture", material = mat.name, property = prop, texture = tex.name }));
+        }
+
+        // Assign a material ASSET to a renderer's material slot (scene object). Fills the first
+        // null slot if no index given — the common case after extracting FBX materials nulls slots.
+        internal static AutonomousMcpToolResponse HandleAssignMaterialToRenderer(JObject args)
+        {
+            var target = ResolveGameObject(args);
+            if (target == null)
+                return Error("assign requires a valid target GameObject by instanceId/name/path.");
+
+            var renderer = target.GetComponent<Renderer>();
+            if (renderer == null)
+                return Error($"No Renderer found on '{target.name}'.");
+
+            var mat = ResolveMaterialAsset(args, out var err);
+            if (mat == null) return Error(err);
+
+            var materials = renderer.sharedMaterials;
+            int index = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex")
+                        ?? args.Value<int?>("index") ?? args.Value<int?>("slot") ?? -1;
+
+            if (index < 0)
+            {
+                for (int i = 0; i < materials.Length; i++)
+                    if (materials[i] == null) { index = i; break; }
+                if (index < 0)
+                    return Error("No 'index' given and no empty (null) slot to fill.");
+            }
+            if (index < 0 || index >= materials.Length)
+                return Error($"Material index {index} out of range (0..{materials.Length - 1}).");
+
+            var prev = materials[index] != null ? materials[index].name : "(null)";
+            Undo.RecordObject(renderer, "Assign Material");
+            materials[index] = mat;
+            renderer.sharedMaterials = materials;
+            EditorUtility.SetDirty(renderer);
+            if (target.scene.IsValid())
+                UnityEditor.SceneManagement.EditorSceneManager.MarkSceneDirty(target.scene);
+
+            return Success(JToken.FromObject(new
+            {
+                action = "assign",
+                gameObject = target.name,
+                index,
+                from = prev,
+                to = mat.name
+            }));
         }
 
         internal static AutonomousMcpToolResponse HandleGetMaterial(JObject args)
