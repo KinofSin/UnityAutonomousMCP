@@ -129,6 +129,25 @@ function registerAllTools(server: McpServer): void {
     async () => callUnity("health_check", {})
   );
 
+  // ── Advisor HUD ──
+
+  server.tool(
+    "hud_post",
+    "Post advice into the in-Unity Advisor HUD (appears in the dockable panel for the user). Use plain language a novice understands.",
+    {
+      text: z.string().min(1).describe("Advice text (plain/markdown)"),
+      level: z.enum(["info", "success", "warning"]).optional().describe("Tint (default info)"),
+    },
+    async (input) => callUnity("hud_post", input)
+  );
+
+  server.tool(
+    "hud_poll",
+    "Drain the Advisor HUD outbox: returns everything the user sent from Unity (notes, selection, console errors) and clears the queue. Call this when a tool response shows hudOutbox.pending > 0, or when the user says they sent something.",
+    {},
+    async () => callUnity("hud_poll", {})
+  );
+
   // ── read_console ──
 
   server.tool(

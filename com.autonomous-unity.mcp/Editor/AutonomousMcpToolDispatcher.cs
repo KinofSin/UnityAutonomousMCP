@@ -32,7 +32,7 @@ namespace AutonomousMcp.Editor
             "manage_project_settings", "get_installed_packages", "list_shaders", "get_asset_info",
             "scan_armature", "scan_avatar", "manage_scriptable_object", "manage_texture",
             "refresh_unity", "list_menu_items", "inspect_type", "list_custom_tools",
-            "execute_custom_tool", "batch_execute"
+            "execute_custom_tool", "batch_execute", "hud_post", "hud_poll"
         };
 
         public static AutonomousMcpToolResponse Dispatch(AutonomousMcpEnvelope envelope)
@@ -65,6 +65,10 @@ namespace AutonomousMcp.Editor
                     response?.success ?? false,
                     response?.error,
                     categoryForLog);
+                // Piggyback the Advisor-HUD outbox count so the AI client notices user sends.
+                if (response != null)
+                    response.hudOutbox = JToken.FromObject(
+                        new { pending = AutonomousMcp.Editor.Advisor.AdvisorStore.PendingCount() });
                 return response;
             }
 
@@ -112,6 +116,8 @@ namespace AutonomousMcp.Editor
                 {
                     case "health_check":               legacy = HandleHealthCheck(args); break;
                     case "read_console":               legacy = HandleReadConsole(args); break;
+                    case "hud_post":                   legacy = HandleHudPost(args); break;
+                    case "hud_poll":                   legacy = HandleHudPoll(args); break;
                     case "manage_scene":               legacy = HandleManageScene(args); break;
                     case "manage_gameobject":          legacy = HandleManageGameObject(args); break;
                     case "manage_script":              legacy = HandleManageScript(args); break;
@@ -236,7 +242,9 @@ namespace AutonomousMcp.Editor
                     "inspect_type",
                     "list_custom_tools",
                     "execute_custom_tool",
-                    "batch_execute"
+                    "batch_execute",
+                    "hud_post",
+                    "hud_poll"
                 },
                 supportedActions = new
                 {
@@ -4876,6 +4884,33 @@ public static class __McpEval
                 ["count"] = operations.Count,
                 ["results"] = results
             });
+        }
+
+        // ───────── Advisor HUD ─────────
+
+        internal static AutonomousMcpToolResponse HandleHudPost(JObject args)
+        {
+            var text = args.Value<string>("text");
+            if (string.IsNullOrWhiteSpace(text))
+                return Error("hud_post requires non-empty 'text'.");
+            var level = args.Value<string>("level") ?? "info";
+            AutonomousMcp.Editor.Advisor.AdvisorStore.AddText(text, level);
+            return Success(JToken.FromObject(new { posted = true, level }));
+        }
+
+        internal static AutonomousMcpToolResponse HandleHudPoll(JObject args)
+        {
+            var items = AutonomousMcp.Editor.Advisor.AdvisorStore.DrainOutbox();
+            return Success(JToken.FromObject(new
+            {
+                count = items.Count,
+                items = items.Select(i => new
+                {
+                    type = i.type,
+                    payload = i.payload,
+                    enqueuedAtUtc = i.enqueuedAtUtc
+                }).ToArray()
+            }));
         }
 
         private static AutonomousMcpToolResponse Success(JToken data)

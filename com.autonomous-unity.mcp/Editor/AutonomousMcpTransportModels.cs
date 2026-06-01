@@ -27,5 +27,11 @@ namespace AutonomousMcp.Editor
         public bool success;
         public JToken data;
         public string error;
+
+        /// <summary>
+        /// Set by the dispatcher on every response so the AI client notices queued Advisor-HUD
+        /// sends without a dedicated call: <c>{ "pending": N }</c>. Drain with the hud_poll tool.
+        /// </summary>
+        public JToken hudOutbox;
     }
 }
