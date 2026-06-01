@@ -28,6 +28,7 @@ namespace AutonomousMcp.Editor.Templates
         public string avatarName;
         public string platform;      // "pc" | "quest" | "unknown"
         public bool isAvatar;
+        public string pairedWith;    // the PC<->Quest twin's name, or null
         public List<TemplateStep> steps = new List<TemplateStep>();
     }
 

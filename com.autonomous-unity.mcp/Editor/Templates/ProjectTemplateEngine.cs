@@ -23,5 +23,32 @@ namespace AutonomousMcp.Editor.Templates
                 new TemplateStep { id = "folders",     label = "Project folders",              done = s.hasFolders },
             };
         }
+
+        // Strip quest/android/pc tokens and non-alphanumerics, lowercase — the "base" avatar identity.
+        public static string BaseName(string name)
+        {
+            if (string.IsNullOrEmpty(name)) return string.Empty;
+            var n = name.ToLowerInvariant();
+            n = n.Replace("quest", " ").Replace("android", " ").Replace("(pc)", " ").Replace("pc", " ");
+            var sb = new System.Text.StringBuilder();
+            foreach (var c in n) if (char.IsLetterOrDigit(c)) sb.Append(c);
+            return sb.ToString();
+        }
+
+        // Map each avatar that has a PC<->Quest twin (same base name, different platform) to its twin's name.
+        public static System.Collections.Generic.Dictionary<string, string> ComputePairs(
+            System.Collections.Generic.List<string> names)
+        {
+            var pairs = new System.Collections.Generic.Dictionary<string, string>();
+            for (int i = 0; i < names.Count; i++)
+                for (int j = i + 1; j < names.Count; j++)
+                {
+                    if (BaseName(names[i]).Length == 0 || BaseName(names[i]) != BaseName(names[j])) continue;
+                    if (ClassifyPlatform(names[i]) == ClassifyPlatform(names[j])) continue;
+                    pairs[names[i]] = names[j];
+                    pairs[names[j]] = names[i];
+                }
+            return pairs;
+        }
     }
 }

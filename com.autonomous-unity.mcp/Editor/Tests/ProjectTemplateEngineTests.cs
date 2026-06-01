@@ -40,5 +40,23 @@ namespace AutonomousMcp.SelfTest
             var s = new AvatarState { hasExpressionMenu = true, hasExpressionParams = true };
             Assert.IsTrue(ProjectTemplateEngine.ComputeSteps(s).Find(x => x.id == "expressions").done);
         }
+
+        [Test]
+        public void BaseName_strips_quest_and_android_tokens()
+        {
+            Assert.AreEqual("leaf", ProjectTemplateEngine.BaseName("LEAF QUEST"));
+            Assert.AreEqual("leaf", ProjectTemplateEngine.BaseName("LEAF"));
+            Assert.AreEqual("cat", ProjectTemplateEngine.BaseName("Cat_Android"));
+        }
+
+        [Test]
+        public void ComputePairs_matches_pc_with_quest_twin()
+        {
+            var pairs = ProjectTemplateEngine.ComputePairs(
+                new System.Collections.Generic.List<string> { "LEAF", "LEAF QUEST", "Lonely" });
+            Assert.AreEqual("LEAF QUEST", pairs["LEAF"]);
+            Assert.AreEqual("LEAF", pairs["LEAF QUEST"]);
+            Assert.IsFalse(pairs.ContainsKey("Lonely"), "no twin -> not in the map");
+        }
     }
 }

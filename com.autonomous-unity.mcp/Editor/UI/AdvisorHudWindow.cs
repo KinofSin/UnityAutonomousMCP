@@ -42,6 +42,7 @@ namespace AutonomousMcp.Editor.UI
                 if (GUILayout.Button("What's next?", EditorStyles.miniButton)) QuickAsk("whats_next");
                 if (GUILayout.Button("What's wrong?", EditorStyles.miniButton)) QuickAsk("whats_wrong");
                 if (GUILayout.Button("Upload-ready?", EditorStyles.miniButton)) QuickAsk("upload_ready");
+                if (GUILayout.Button("Set up my project", EditorStyles.miniButton)) QuickAsk("setup_project");
             }
         }
 

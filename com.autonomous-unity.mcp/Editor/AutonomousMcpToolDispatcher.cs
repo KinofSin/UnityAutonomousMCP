@@ -4954,9 +4954,23 @@ public static class __McpEval
                     return Success(JToken.FromObject(new { avatars = InspectScene() }));
                 case "apply":
                     return Success(JToken.FromObject(ApplyTemplate(args)));
+                case "notes":
+                    return Success(InteractionNotes());
                 default:
                     return Error($"manage_project_template: unknown action '{action}'.");
             }
+        }
+
+        private static JToken InteractionNotes()
+        {
+            try
+            {
+                var path = AutonomousMcp.Editor.Templates.TemplatePaths.InteractionNotesPath();
+                if (!string.IsNullOrEmpty(path) && System.IO.File.Exists(path))
+                    return JToken.Parse(System.IO.File.ReadAllText(path));
+            }
+            catch { /* fall through */ }
+            return JToken.FromObject(new { version = 1, notes = new object[0] });
         }
 
         private static System.Collections.Generic.List<AutonomousMcp.Editor.Templates.InspectReport> InspectScene()
@@ -4981,6 +4995,11 @@ public static class __McpEval
                     steps      = AutonomousMcp.Editor.Templates.ProjectTemplateEngine.ComputeSteps(state),
                 });
             }
+
+            var names = reports.ConvertAll(r => r.avatarName);
+            var pairs = AutonomousMcp.Editor.Templates.ProjectTemplateEngine.ComputePairs(names);
+            foreach (var r in reports)
+                if (pairs.TryGetValue(r.avatarName, out var twin)) r.pairedWith = twin;
             return reports;
         }
 
@@ -5011,7 +5030,13 @@ public static class __McpEval
             GameObject avatar = null;
             foreach (var go in EnumerateAvatarRoots())
                 if (string.IsNullOrEmpty(targetName) || go.name == targetName) { avatar = go; break; }
-            if (avatar == null) { result.notes.Add("No avatar found in the active scene."); return result; }
+            if (avatar == null)
+            {
+                avatar = new GameObject("New Avatar");
+                UnityEditor.Undo.RegisterCreatedObjectUndo(avatar, "Create starter avatar");
+                result.changed.Add("Created starter avatar root 'New Avatar' (empty scene)");
+                result.notes.Add("Drag your avatar mesh/FBX under 'New Avatar', then re-run apply to finish setup.");
+            }
             result.avatarName = avatar.name;
 
             // 1) Folders (no SDK needed) — idempotent.

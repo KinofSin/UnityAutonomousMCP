@@ -1,0 +1,10 @@
+{
+  "version": 1,
+  "notes": [
+    { "topic": "modular-avatar-vs-vrcfury", "text": "Modular Avatar and VRCFury both run as non-destructive build plugins. They can coexist, but if both drive the same toggle/menu the merge order matters - prefer one system per feature to avoid duplicate menu controls." },
+    { "topic": "poiyomi-locking", "text": "Lock Poiyomi materials BEFORE uploading (unlocked shaders fail VRChat's shader keyword limits and bloat the avatar). Unlock to edit, re-lock to ship." },
+    { "topic": "prefab-install-order", "text": "Install the avatar base prefab first, then drag accessory/clothing prefabs UNDER the avatar so Modular Avatar's Bone Proxy / Merge Armature can find the target armature. Accessories placed at scene root won't merge." },
+    { "topic": "quest-limits", "text": "Quest/Android: VRChat enforces material/poly/texture limits and only Quest-compatible shaders (no Poiyomi). Keep a separate Quest material set + fallback. Use the PC<->Quest twin (e.g. LEAF / LEAF QUEST) so you ship both." },
+    { "topic": "physbones-vs-dynamicbones", "text": "Use PhysBones (VRChat SDK3), not legacy DynamicBones, for hair/clothing jiggle. PhysBones count against the avatar's performance rank." }
+  ]
+}
