@@ -40,3 +40,10 @@ Thumbs.db
 
 # Generator scratch output
 tmp_*.png
+
+# Agent scratch: bridge params, execute_csharp snippets, commit messages, screenshots.
+# PowerShell mangles inline JSON, so these get written to disk constantly and a
+# `git add -A` will otherwise sweep them into a commit.
+tmp-*.json
+tmp-*.txt
+tmp-*.png
