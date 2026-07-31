@@ -121,9 +121,12 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
 
 ## Learned from the first readable editor screenshot
 
-- [ ] **The editor is running the Russian localization** (Позиция / Поворот / Размер in the
-      Inspector). `execute_menu_item` takes English menu paths, so anything driving menus by
-      string may silently miss. Worth checking before relying on menu automation.
+- [x] ~~The editor is running the Russian localization~~ — **wrong, and worth not repeating.**
+      Unity 2022.3 ships no Russian language pack. Only the *Transform* inspector is Russian,
+      because `Assets/MyScripts/Editor/EasyTransforn.cs` registers
+      `[CustomEditor(typeof(Transform), true)]` and replaces Unity's built-in one project-wide.
+      Menu paths are English, so `execute_menu_item` is unaffected. Lesson: a localized-looking
+      inspector means a custom editor, not a localized Unity.
 - [ ] Console carries a recurring `Serialization depth limit 10 exceeded at
       'ConditionGroup.conditions'` warning and `Cannot add menu item 'Tools/YUCP/Other…'`.
       Third-party, but they are noise in every `read_console` and worth knowing are expected.
