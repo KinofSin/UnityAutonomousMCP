@@ -27,12 +27,22 @@ namespace AutonomousMcp.Editor.Core
     ///   GENERATOR_MESHY_API_KEY       — one or more Meshy API keys (rotated)
     ///   GENERATOR_MODEL_3D_PROVIDER   — provider id (default meshy)
     ///   GENERATOR_MODEL_3D_MODE       — preview | refine (default preview)
-    ///   GENERATOR_MODEL_3D_TIMEOUT_SEC — max wait for task completion (default 300)
+    ///   GENERATOR_MODEL_3D_TIMEOUT_SEC — max wait for task completion (default 60, capped at 70)
     /// </summary>
     public static class FreeTierModel3DClient
     {
         private const string MeshyBase = "https://api.meshy.ai/openapi/v2/text-to-3d";
-        private const int DefaultTimeoutSec = 300;
+
+        // This poll loop Thread.Sleeps on the EDITOR MAIN THREAD, and the dispatcher gives
+        // manage_generator a 75s budget (GeneratorDispatchTimeoutMs). The old 300s default (900s
+        // ceiling) therefore bought nothing: the caller got a 503 at 75s while the editor stayed
+        // frozen for the remaining ~225s, with no tool able to run. Staying inside the dispatch
+        // window turns a multi-minute editor freeze into a clean failure that still reports the
+        // Meshy taskId, so a task that finishes server-side is not lost. Generations that
+        // genuinely need longer need a job-based flow (like run_tests/get_test_job), which does
+        // not exist for this tool yet.
+        private const int DefaultTimeoutSec = 60;
+        private const int MaxTimeoutSec = 70;
         private const int PollIntervalMs = 4000;
         private const int MaxCreateAttempts = 5;
 
@@ -211,7 +221,11 @@ namespace AutonomousMcp.Editor.Core
                 }
             }
 
-            result.Error = $"Meshy task timed out after {TimeoutSec()}s (taskId={taskId}, polls={result.PollCount}).";
+            result.Error =
+                $"Meshy task still running after {TimeoutSec()}s (taskId={taskId}, polls={result.PollCount}). " +
+                "The wait is deliberately capped below the tool's dispatch budget so polling cannot " +
+                "freeze the editor. The task may still finish on Meshy's side — reuse this taskId " +
+                "rather than starting a new generation.";
             return result;
         }
 
@@ -320,7 +334,7 @@ namespace AutonomousMcp.Editor.Core
         private static int TimeoutSec()
         {
             var v = Environment.GetEnvironmentVariable("GENERATOR_MODEL_3D_TIMEOUT_SEC");
-            if (int.TryParse(v, out var sec) && sec > 0) return Math.Min(sec, 900);
+            if (int.TryParse(v, out var sec) && sec > 0) return Math.Min(sec, MaxTimeoutSec);
             return DefaultTimeoutSec;
         }
     }

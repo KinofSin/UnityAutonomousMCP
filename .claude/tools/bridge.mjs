@@ -11,14 +11,13 @@
 // possibly have executed the tool:
 //
 //   refused  — nothing listening on the port. The request was never delivered,
-//              so a retry cannot double-apply. Always safe.
-//   busy     — our own HTTP 503 {busy:true} from AutonomousMcpTransportHost, which
-//              means the main thread was occupied and the dispatcher explicitly did
-//              not run the tool. Always safe.
-//   timeout  — connection established, then no answer in time. The editor may have
-//              run the tool already. Ambiguous, so only retried when the caller
-//              passes idempotent:true.
-//   network  — socket died mid-flight. Ambiguous, same rule as timeout.
+//              so a retry cannot double-apply. The ONLY provably safe case.
+//   busy     — our HTTP 503 {busy:true}. Do not read this as "the tool did not run":
+//              AutonomousMcpMainThread throws TimeoutException when it gives up
+//              *waiting*, but the queued action is never cancelled and may still be
+//              executing. Ambiguous, so idempotent-only.
+//   timeout  — connection established, then no answer in time. Same reasoning.
+//   network  — socket died mid-flight. Same reasoning.
 //
 // Env: BRIDGE=http://127.0.0.1:8080/mcp/tool
 
@@ -101,8 +100,8 @@ export async function request(tool, params = {}, opts = {}) {
       return last;
     }
 
-    const safe = last.kind === "refused" || last.kind === "busy";
-    const retryable = safe || (idempotent && (last.kind === "timeout" || last.kind === "network"));
+    const ambiguous = last.kind === "busy" || last.kind === "timeout" || last.kind === "network";
+    const retryable = last.kind === "refused" || (idempotent && ambiguous);
     if (!retryable || Date.now() + delay > deadline) {
       last.attempts = attempts;
       return last;

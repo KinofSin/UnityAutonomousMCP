@@ -60,7 +60,8 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       go in an mcs response file. Verified: a 62-line snippet and an 8-line one doing real editor
       work both run, and bad code returns a genuine C# diagnostic.
 - [ ] `execute_csharp` remaining sharp edge: a snippet that **names** a duplicated BCL type
-      (`List<T>`, `Dictionary<,>`, `StringBuilder`) still fails with "defined multiple times",
+      (`List<T>`, `Dictionary<,>`, `StringBuilder`, and also `System.IO.Path` — it is most of
+      `System.*`, not just collections) still fails with "defined multiple times",
       because mscorlib and the netstandard/System.Runtime facades all get referenced and mcs
       counts a forwarded type as a second definition. Dropping the facades is not the fix — it
       was tried, and Unity's own assemblies are built against netstandard, so every snippet
@@ -100,7 +101,24 @@ failure whose name is under `AutonomousMcp.SelfTest`.
 
 ## Known-stale or unverified
 
-- [ ] Generators added in parallel and never reviewed: Audio, Model3D, Animation,
-      TerrainLayer. Either verify them or mark them experimental in their tool descriptions.
+- [x] **Animation generator — verified.** All four presets produce real clips, not just files:
+      `spin` 1 curve/2 keys on `localEulerAnglesRaw.y`, `bob` 1/31 on `localPosition.y`,
+      `pulse` 3/93 on `localScale.x/y/z`, `blink` 1/5 on `localScale.y`; all 2s and looping.
+      Fully offline, no key, no network — the one generator that is unconditionally usable.
+- [x] **Audio + Model3D — unconfigured path verified.** Both correctly report themselves
+      unconfigured with actionable status text and fall back to the stub rather than failing
+      obscurely. Their network paths remain unverified: Audio needs `GENERATOR_HF_TOKEN`,
+      Model3D needs `GENERATOR_MESHY_API_KEY`.
+- [x] **Model3D main-thread freeze — fixed.** Its Meshy poll loop `Thread.Sleep`s on the *editor
+      main thread* for up to 300s (900s ceiling) while the dispatcher only waits 75s. With a valid
+      key that guaranteed a 503 at 75s plus a frozen editor for the remaining ~225s, during which
+      no tool could run. The wait is now capped at 60s (70s ceiling) so it fails cleanly inside
+      the dispatch window, and the error returns the Meshy taskId so a server-side task is not
+      lost. Genuinely long generations need a job-based flow, which does not exist yet.
+- [ ] **TerrainLayer — network path still unverified.** Registered, configured, `terrain_layer`
+      snake_case parsing works and the failure path is clean and actionable, but every attempt
+      today hit the keyless Pollinations throttle ("Queue full for IP", HTTP 402/429) including
+      after a 75s wait. Needs `GENERATOR_HF_TOKEN` or a quiet window to confirm it actually
+      writes the `.terrainlayer` + albedo pair.
 - [ ] `com.autonomous-unity.mcp/Editor/AutonomousMcpToolDispatcher.cs` is ~5,350 lines.
       Split opportunistically only; it is high-churn, low-reward risk.

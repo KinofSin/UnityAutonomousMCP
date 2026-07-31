@@ -215,12 +215,18 @@ namespace AutonomousMcp.Editor
                 // expected transient, not a fault, so answer 503 instead of letting the
                 // exception escape and drop the connection — a harness can then back off and
                 // retry rather than concluding the bridge died.
+                //
+                // `executed` is deliberately "unknown": AutonomousMcpMainThread times out the
+                // *wait*, it does not cancel the queued action, so the tool may still be
+                // running. Callers must not treat this as "it did not happen" and blindly
+                // retry a mutating tool.
                 WriteHttpResponse(context.Response, 503, JsonConvert.SerializeObject(new
                 {
                     success = false,
-                    error = ex.Message,
+                    error = ex.Message + " (the tool may still be executing; do not blindly retry a mutating call)",
                     busy = true,
-                    retryable = true
+                    retryable = true,
+                    executed = "unknown"
                 }));
                 return;
             }
