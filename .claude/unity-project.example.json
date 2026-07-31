@@ -1,0 +1,5 @@
+{
+  "_comment": "Copy to unity-project.json (gitignored — the paths are machine-local). Used by .claude/tools/unity-supervisor.mjs to find and launch the editor. editorPath is optional: it is derived from the project's ProjectSettings/ProjectVersion.txt against the standard Unity Hub install location, which is safer than hardcoding a version because opening a VRChat project with the wrong editor silently upgrades it.",
+  "projectPath": "C:/path/to/YourUnityProject",
+  "editorPath": "C:/Program Files/Unity/Hub/Editor/2022.3.22f1/Editor/Unity.exe"
+}

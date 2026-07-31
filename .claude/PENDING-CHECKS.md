@@ -204,6 +204,24 @@ failure whose name is under `AutonomousMcp.SelfTest`.
 - [ ] `com.autonomous-unity.mcp/Editor/AutonomousMcpToolDispatcher.cs` is ~5,350 lines.
       Split opportunistically only; it is high-churn, low-reward risk.
 
+## Unity supervisor (2026-07-31)
+
+- [x] `status` / `ensure` fast-path / `enable-autoconnect` guard all verified against the live
+      editor. Project + editor + version resolve correctly from `.claude/unity-project.json` and
+      `ProjectVersion.txt`; the Win32_Process query correctly reports the running editor.
+- [x] `AutoConnect` on this machine is **already `True`**, so the cold-launch path should work here.
+      `enable-autoconnect` is only needed to provision a fresh machine — and only with the editor
+      closed. While the bridge is up, set the pref through `execute_csharp` on
+      `EditorPrefs`/`AutonomousMcp.AutoConnect` instead (`AutonomousMcpSettings` is `internal`,
+      so it is unreachable from a snippet).
+- [ ] **Untested: the actual cold launch.** Verifying it means closing Unity, and doing that
+      unasked while the user is at the machine is not acceptable. Launching a *second* project to
+      test it would be worse — with AutoConnect on, the new editor would race the running one for
+      port 8080 and MCP traffic could land on the wrong editor. Next time Unity is closed:
+      `node .claude/tools/unity-supervisor.mjs ensure`.
+- [ ] Untested: the Safe Mode / licence log diagnostics. They need a project that genuinely fails
+      to start, so they are pattern-matched from the documented log text rather than observed.
+
 ## Full EditMode suite, post-`execute_csharp` change (2026-07-31)
 
 - [x] 260 tests: 236 passed, **17 failed, 7 skipped — zero failures in this package.** Every failure

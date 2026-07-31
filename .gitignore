@@ -30,6 +30,10 @@ Thumbs.db
 # VRChat optimization loop state (machine-local measurements)
 .claude/.vrc-state/
 
+# Supervisor config — absolute paths to this machine's Unity install/project.
+# Committed as unity-project.example.json instead.
+.claude/unity-project.json
+
 # .meta residue from the old repo-root Unity mount (mount the package SUBFOLDER instead).
 # Each of these shadows a path that is already ignored above.
 /node_modules.meta
