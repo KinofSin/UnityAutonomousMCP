@@ -2168,6 +2168,9 @@ namespace AutonomousMcp.Editor
             var shader = Shader.Find(shaderName);
             if (shader == null) return Error($"Shader '{shaderName}' not found. Use list_shaders to see available shaders.");
             var prev = mat.shader != null ? mat.shader.name : "(none)";
+            // Swapping a shader drops any property the new shader lacks — capture first.
+            AutonomousMcp.Editor.Core.CheckpointStore.CaptureAsset(
+                AssetDatabase.GetAssetPath(mat), "manage_material.set_shader");
             mat.shader = shader; // texture slots with matching property names (e.g. _MainTex) carry over
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
@@ -2196,6 +2199,8 @@ namespace AutonomousMcp.Editor
             }
             if (tex == null) return Error($"Texture '{texRef}' not found.");
             if (!mat.HasProperty(prop)) return Error($"Material '{mat.name}' has no property '{prop}'.");
+            AutonomousMcp.Editor.Core.CheckpointStore.CaptureAsset(
+                AssetDatabase.GetAssetPath(mat), "manage_material.assign_texture");
             mat.SetTexture(prop, tex);
             EditorUtility.SetDirty(mat);
             AssetDatabase.SaveAssets();
@@ -2409,6 +2414,11 @@ namespace AutonomousMcp.Editor
             var valueToken = args["value"];
             if (valueToken == null)
                 return Error("set_property requires a 'value' parameter.");
+
+            // Undo covers the in-memory object, but the .mat asset on disk is what ships —
+            // snapshot it so a checkpoint restore can actually put the values back.
+            AutonomousMcp.Editor.Core.CheckpointStore.CaptureAsset(
+                AssetDatabase.GetAssetPath(mat), "manage_material.set_property");
 
             Undo.RecordObject(mat, "MCP: Set Material Property");
 
@@ -4376,6 +4386,11 @@ public static class __McpEval
             if (valueToken == null)
                 return Error("set_property requires a 'value' parameter.");
 
+            // ScriptableObjects include VRC Expression Menus/Parameters — capture the asset
+            // bytes so a restore is possible even after AssetDatabase.SaveAssets.
+            AutonomousMcp.Editor.Core.CheckpointStore.CaptureAsset(
+                AssetDatabase.GetAssetPath(so), "manage_scriptable_object.set_property");
+
             Undo.RecordObject(so, "MCP: Set ScriptableObject Property");
 
             bool written = WriteSerializedPropertyValue(prop, valueToken);
@@ -4580,6 +4595,11 @@ public static class __McpEval
 
             if (!changed)
                 return Error("No valid settings provided to change.");
+
+            // Importer settings live in the .meta sibling and SaveAndReimport is not undoable,
+            // so snapshot before writing — this is a Tier-1 lever the loop applies autonomously.
+            AutonomousMcp.Editor.Core.CheckpointStore.CaptureAsset(
+                importer.assetPath, "manage_texture.set_import_settings");
 
             importer.SaveAndReimport();
 

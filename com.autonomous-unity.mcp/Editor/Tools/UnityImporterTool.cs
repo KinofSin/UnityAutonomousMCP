@@ -75,6 +75,9 @@ namespace AutonomousMcp.Editor.Tools
                     if (!WriteValue(sp, args["value"]))
                         return Err($"Unsupported property type {sp.propertyType} for set_property.");
 
+                    // Importer writes land in the .meta sibling and are not undoable.
+                    CheckpointStore.CaptureAsset(path, "unity_importer.set_property");
+
                     so.ApplyModifiedProperties();
                     importer.SaveAndReimport();
                     return Ok(new { action, asset_path = path, property_path = propPath, value = ReadValue(sp) });

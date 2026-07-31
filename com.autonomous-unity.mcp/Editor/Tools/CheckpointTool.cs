@@ -16,7 +16,9 @@ namespace AutonomousMcp.Editor.Tools
         {
             ToolRegistry.Register("manage_checkpoint", ToolMode.Mutate, ToolCategory.Checkpoint,
                 "Scene/asset checkpoints under Library/MCP_Checkpoints. " +
-                "Actions: create, list, get, restore, diff, delete, delete_all, disk_usage.",
+                "Actions: create, list, get, restore, diff, delete, delete_all, disk_usage. " +
+                "Assets (with their .meta importer settings) are captured copy-on-first-touch as " +
+                "mutating tools run; restore accepts include_scene:false to revert asset edits only.",
                 Handle);
         }
 
@@ -38,7 +40,12 @@ namespace AutonomousMcp.Editor.Tools
                         manifest.label,
                         manifest.activeScenePath,
                         manifest.createdUtc,
-                        trackedAssetCount = manifest.trackedAssetPaths.Count
+                        manifest.sceneWasDirty,
+                        trackedAssetCount = manifest.trackedAssetPaths.Count,
+                        capturedAssetCount = manifest.capturedAssets.Count,
+                        note = "Assets are captured copy-on-first-touch as mutating tools run, " +
+                               "so capturedAssetCount grows after creation. Assets never touched " +
+                               "by a tool are not stored — this is not a full project rollback."
                     });
                 }
                 case "list":
@@ -51,7 +58,8 @@ namespace AutonomousMcp.Editor.Tools
                         m.activeScenePath,
                         m.toolThatTriggered,
                         m.clientId,
-                        trackedAssetCount = m.trackedAssetPaths.Count
+                        trackedAssetCount = m.trackedAssetPaths.Count,
+                        capturedAssetCount = m.capturedAssets.Count
                     }).ToList();
                     return Ok(new { action, count = manifests.Count, checkpoints = manifests });
                 }
@@ -66,9 +74,13 @@ namespace AutonomousMcp.Editor.Tools
                 {
                     var id = args.Value<string>("id");
                     if (string.IsNullOrEmpty(id)) return Err("id required.");
-                    if (!CheckpointStore.Restore(id, out var error))
+                    var captured = CheckpointStore.CapturedAssetCount(id);
+                    // include_scene:false reverts only asset/importer edits, leaving the open
+                    // scene (and any unsaved work in it) alone.
+                    var includeScene = args.Value<bool?>("include_scene") ?? args.Value<bool?>("includeScene") ?? true;
+                    if (!CheckpointStore.Restore(id, includeScene, out var error))
                         return Err($"Restore failed: {error}");
-                    return Ok(new { action, id, restored = true });
+                    return Ok(new { action, id, restored = true, restoredAssetCount = captured, includeScene });
                 }
                 case "diff":
                 {
