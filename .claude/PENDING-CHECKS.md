@@ -59,16 +59,24 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       assemblies, which blew the ~32 KB Windows limit; even `return 2+2;` failed. References now
       go in an mcs response file. Verified: a 62-line snippet and an 8-line one doing real editor
       work both run, and bad code returns a genuine C# diagnostic.
-- [ ] `execute_csharp` remaining sharp edge: a snippet that **names** a duplicated BCL type
-      (`List<T>`, `Dictionary<,>`, `StringBuilder`, and also `System.IO.Path` — it is most of
-      `System.*`, not just collections) still fails with "defined multiple times",
-      because mscorlib and the netstandard/System.Runtime facades all get referenced and mcs
-      counts a forwarded type as a second definition. Dropping the facades is not the fix — it
-      was tried, and Unity's own assemblies are built against netstandard, so every snippet
-      touching a Unity type then fails with "System.Object is defined in an assembly that is not
-      referenced". Arrays, strings, primitives and the Unity/UnityEditor APIs all work, which
-      covers most editor scripting. A real fix likely means a curated reference set rather than
-      "every loaded assembly".
+- [x] **`execute_csharp` "defined multiple times" is fixed** (2026-07-31). Naming `List<T>`,
+      `Dictionary<,>`, `StringBuilder` or `System.IO.Path` — most of `System.*` — used to fail even
+      fully qualified. **The diagnosis recorded here was wrong**, and wrong in a way worth keeping:
+      it blamed the netstandard/System.Runtime facades, which are innocent. Measured by trying each
+      strategy and printing the result: dropping netstandard alone (321 refs) reproduces the error,
+      dropping the entire `Facades/` directory (313 refs) reproduces it, and `-nostdlib` with
+      netstandard as the only core fails differently ("predefined type `System.Object' is defined
+      in an assembly that is not referenced") because a pure-forward assembly cannot *be* the core
+      library. The actual cause: **mcs implicitly references its own mscorlib**, so passing the
+      loaded copy with `-r:` as well gives it two physically different files defining the same
+      types. Fix is one exclusion — never reference the loaded `mscorlib`, and keep every facade,
+      because they forward to the implicit core and LINQ's signatures need `netstandard` present
+      (excluding facades broke `Select`). Verified: `List` + `Dictionary` + `StringBuilder` +
+      `Path.Combine` + LINQ + `AssetDatabase` + `Selection` in one snippet; a bad snippet still
+      returns a plain C# diagnostic after a single compile; a runtime fault still surfaces as
+      `Runtime error: DivideByZeroException`. Lesson: the plausible cause was asserted three
+      revisions running without being measured — printing what each candidate actually did found
+      it in one round trip.
 
 ## World loop (first run, 2026-07-31)
 
@@ -127,6 +135,12 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       `[CustomEditor(typeof(Transform), true)]` and replaces Unity's built-in one project-wide.
       Menu paths are English, so `execute_menu_item` is unaffected. Lesson: a localized-looking
       inspector means a custom editor, not a localized Unity.
+- [x] `EasyTransforn.cs` **Reset All pasted instead of resetting** — it assigned the clipboard
+      (`TransformCopier.*`) to all three fields, so with something copied it was a second Paste,
+      and with nothing copied it zeroed position/rotation and only then fell back to default scale.
+      Now matches the per-row reset buttons directly above it: `Vector3.zero` / `Quaternion.identity`
+      / `globalScale`. Pre-existing bug in the user's own script, not from the translation pass.
+      (Backup remains at `C:\VRChatProjectsAlcom\Leaf\EasyTransforn.cs.bak`.)
 - [ ] Console carries a recurring `Serialization depth limit 10 exceeded at
       'ConditionGroup.conditions'` warning and `Cannot add menu item 'Tools/YUCP/Other…'`.
       Third-party, but they are noise in every `read_console` and worth knowing are expected.

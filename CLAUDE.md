@@ -91,14 +91,19 @@ Engine stance remains **Unity 2022.3.22f1 + VRChat SDK3**. Always-loaded referen
 **Optimization loop** — the audit skills measure over the bridge, they do not parse prefab YAML:
 
 - **Step 0 — scene/avatar dossier** (before guessing inspector/material state): `node .claude/tools/scene-dossier.mjs avatar <goName>` or `… scene`. Pulls sectioned `unity_perception {action:"dossier"}` calls, writes `.claude/.vrc-state/dossier-<slug>.md` + `.json`, prints a ~40-line summary. Grep the artifact for a mesh/material; do not dump full Poiyomi property lists into chat (~87k tokens for a 28-mat avatar). `verify <slug>` rechecks `stateHash` (exit `1` = stale). Locked Poiyomi (`Hidden/Locked/…`) is flagged — per-property values are not meaningfully readable until unlocked.
-- **`execute_csharp` references go in an mcs response file**, not on the command line — Leaf loads
-  several hundred assemblies and `/r:` per reference blew the ~32 KB Windows limit, so every
-  snippet failed with "The filename or extension is too long" regardless of length. Remaining
-  sharp edge: naming a duplicated BCL type (`List<T>`, `Dictionary<,>`, `StringBuilder`) fails
-  with "defined multiple times", because mscorlib and the netstandard facades all get referenced.
-  Dropping the facades is *not* the fix (Unity's assemblies target netstandard). It is most of
-  `System.*`, including `System.IO.Path`, not just collections. Use arrays, strings, primitives
-  and the Unity/UnityEditor APIs; those all work.
+- **`execute_csharp` is fully usable — the BCL restriction is gone** (2026-07-31). Two separate
+  bugs stacked on it. References go in an mcs **response file**, not on the command line: Leaf
+  loads ~325 assemblies and `/r:` per reference blew the ~32 KB Windows limit, failing every
+  snippet with "The filename or extension is too long" regardless of length. Then naming any of
+  `List<T>`, `Dictionary<,>`, `StringBuilder`, `System.IO.Path` — most of `System.*` — failed with
+  "defined multiple times". That was **not** the netstandard facades, the obvious suspect: dropping
+  netstandard (321 refs) or the whole `Facades/` directory (313 refs) reproduces the error exactly.
+  mcs *implicitly* references its own mscorlib, so passing the loaded copy with `-r:` too gives it
+  two physically different files defining the same types. Fix is one exclusion — never reference
+  the loaded `mscorlib`; keep every facade, since they forward to the implicit core and LINQ's
+  signatures need `netstandard`. Verified: `List`/`Dictionary`/`StringBuilder`/`Path`/LINQ/
+  `AssetDatabase`/`Selection` in one snippet. `all-loaded` remains a fallback, and a genuine
+  snippet error still reports plainly after a single compile rather than a strategy chain.
 - **Generators**: `Animation` is procedural/offline and always available (`spin`/`bob`/`pulse`/
   `blink`, verified to emit real curves). `TerrainLayer` and the image kinds work keyless through
   Pollinations but throttle hard on repeats ("Queue full for IP") — set `GENERATOR_HF_TOKEN` for

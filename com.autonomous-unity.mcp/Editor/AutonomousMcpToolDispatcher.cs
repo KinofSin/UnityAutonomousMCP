@@ -2525,7 +2525,7 @@ namespace AutonomousMcp.Editor
                 return Error("execute_csharp requires non-empty 'code'.");
 
             var returnResult = args.Value<bool?>("return_result") ?? true;
-            string responseFile = null;
+            var tempFiles = new List<string>();
 
             try
             {
@@ -2547,16 +2547,7 @@ public static class __McpEval
     }
 }";
                 var provider = new Microsoft.CSharp.CSharpCodeProvider();
-                var parameters = new System.CodeDom.Compiler.CompilerParameters
-                {
-                    GenerateInMemory = true,
-                    GenerateExecutable = false,
-                    TreatWarningsAsErrors = false
-                };
 
-                // Reference every loaded assembly so a snippet can touch anything the editor
-                // can. Collecting them is the easy part — handing them to the compiler is not.
-                //
                 // Keep one assembly per simple name: Unity can have the same assembly loaded
                 // from two locations (editor vs player profile), and referencing both makes
                 // every type in them ambiguous.
@@ -2573,49 +2564,35 @@ public static class __McpEval
                     catch { /* skip problematic assemblies */ }
                 }
 
-                // KNOWN LIMITATION: mscorlib and the netstandard/System.Runtime facades are all
-                // loaded, and mcs counts a facade's forwarded type as a second definition. So a
-                // snippet that *names* a duplicated BCL type (List<T>, Dictionary<,>,
-                // StringBuilder) fails with "defined multiple times", even fully qualified.
-                // Dropping the facades is not a fix — Unity's own assemblies are built against
-                // netstandard, so without it every snippet touching a Unity type fails with
-                // "System.Object is defined in an assembly that is not referenced" instead.
-                // Arrays, strings, primitives and the Unity/UnityEditor APIs are unaffected,
-                // which covers most editor scripting; prefer those over generic collections.
-                var refPaths = new HashSet<string>(byName.Values, StringComparer.OrdinalIgnoreCase);
+                System.CodeDom.Compiler.CompilerResults results = null;
+                string failure = null;
+                var referenceProblem = false;
+                var tried = new List<string>();
 
-                // CSharpCodeProvider puts every reference on the compiler's command line as
-                // /r:<path>. A Unity project with an SDK and a few asset packages loads several
-                // hundred assemblies with long paths, which blows the ~32 KB Windows command
-                // line — so EVERY snippet failed with "The filename or extension is too long",
-                // however short it was. Pass the references in an mcs response file instead and
-                // keep the command line small.
-                try
+                foreach (var strategy in BuildReferenceStrategies(byName))
                 {
-                    responseFile = Path.Combine(Path.GetTempPath(), $"mcp_eval_{Guid.NewGuid():N}.rsp");
-                    var rsp = new System.Text.StringBuilder();
-                    foreach (var p in refPaths) rsp.Append("-r:\"").Append(p).Append("\"\n");
-                    File.WriteAllText(responseFile, rsp.ToString());
-                    parameters.CompilerOptions = $"@\"{responseFile}\"";
-                }
-                catch
-                {
-                    // Response file unavailable: fall back to the inline form. It may still hit
-                    // the length limit, but failing to compile at all is strictly worse.
-                    responseFile = null;
-                    foreach (var p in refPaths) parameters.ReferencedAssemblies.Add(p);
+                    results = CompileEval(provider, fullCode, strategy, tempFiles);
+                    if (!results.Errors.HasErrors) { failure = null; break; }
+
+                    failure = DescribeCompilerErrors(results);
+                    tried.Add($"{strategy.Name} ({strategy.Refs.Count} refs): {FirstCompilerError(results)}");
+
+                    // A bad snippet fails identically under every strategy, so stop and report it
+                    // rather than retrying and answering with a worse reference set's diagnostics.
+                    referenceProblem = LooksLikeReferenceProblem(results);
+                    if (!referenceProblem) break;
                 }
 
-                var results = provider.CompileAssemblyFromSource(parameters, fullCode);
-                if (results.Errors.HasErrors)
+                if (failure != null)
                 {
-                    var errors = new List<string>();
-                    foreach (System.CodeDom.Compiler.CompilerError error in results.Errors)
-                    {
-                        if (!error.IsWarning)
-                            errors.Add($"Line {error.Line}: {error.ErrorText}");
-                    }
-                    return Error($"Compilation failed:\n{string.Join("\n", errors)}");
+                    // Every strategy hit an assembly-resolution wall, so the snippet is probably
+                    // fine and the reference set is not — show what each one did.
+                    byName.TryGetValue("mscorlib", out var corePath);
+                    return Error(referenceProblem
+                        ? "Compilation failed — no reference strategy resolved the BCL:\n  " +
+                          string.Join("\n  ", tried) +
+                          $"\n  loaded mscorlib: {corePath ?? "(not loaded)"}"
+                        : $"Compilation failed:\n{failure}");
                 }
 
                 var type = results.CompiledAssembly.GetType("__McpEval");
@@ -2661,11 +2638,119 @@ public static class __McpEval
             }
             finally
             {
-                if (responseFile != null)
+                foreach (var temp in tempFiles)
                 {
-                    try { File.Delete(responseFile); } catch { /* temp file, best effort */ }
+                    try { File.Delete(temp); } catch { /* temp file, best effort */ }
                 }
             }
+        }
+
+        private sealed class EvalReferenceStrategy
+        {
+            public string Name;
+            public List<string> Refs;
+        }
+
+        // Referencing every loaded assembly used to make System.AppDomain, List<T>, StringBuilder
+        // and most of System.* fail with "defined multiple times", even fully qualified.
+        //
+        // The cause is not the netstandard facade, which is the obvious suspect and is measurably
+        // innocent: dropping it leaves 321 refs and the identical error, and dropping the whole
+        // Facades directory (313 refs) does not help either. mcs *implicitly* references its own
+        // mscorlib, so passing the loaded copy with -r: as well hands it a second, physically
+        // different file defining the same types. Excluding just that one reference fixes it, and
+        // the facades must stay — they forward to the implicit core, and LINQ's signatures need
+        // netstandard present.
+        //
+        // all-loaded is kept as a fallback so an environment where this reasoning does not hold
+        // degrades to the old behaviour rather than to a hard failure.
+        private static List<EvalReferenceStrategy> BuildReferenceStrategies(Dictionary<string, string> byName)
+        {
+            var noExplicitCore = new List<string>();
+            foreach (var pair in byName)
+            {
+                if (pair.Key.Equals("mscorlib", StringComparison.OrdinalIgnoreCase)) continue;
+                noExplicitCore.Add(pair.Value);
+            }
+
+            return new List<EvalReferenceStrategy>
+            {
+                new EvalReferenceStrategy { Name = "no-explicit-core", Refs = noExplicitCore },
+                new EvalReferenceStrategy { Name = "all-loaded", Refs = new List<string>(byName.Values) }
+            };
+        }
+
+        private static System.CodeDom.Compiler.CompilerResults CompileEval(
+            Microsoft.CSharp.CSharpCodeProvider provider,
+            string fullCode,
+            EvalReferenceStrategy strategy,
+            List<string> tempFiles)
+        {
+            var parameters = new System.CodeDom.Compiler.CompilerParameters
+            {
+                GenerateInMemory = true,
+                GenerateExecutable = false,
+                TreatWarningsAsErrors = false
+            };
+
+            // CSharpCodeProvider puts every reference on the compiler's command line as
+            // /r:<path>. A Unity project with an SDK and a few asset packages loads several
+            // hundred assemblies with long paths, which blows the ~32 KB Windows command line —
+            // so EVERY snippet failed with "The filename or extension is too long", however short
+            // it was. Pass the references in an mcs response file instead.
+            try
+            {
+                var responseFile = Path.Combine(Path.GetTempPath(), $"mcp_eval_{Guid.NewGuid():N}.rsp");
+                var rsp = new System.Text.StringBuilder();
+                foreach (var path in strategy.Refs) rsp.Append("-r:\"").Append(path).Append("\"\n");
+                File.WriteAllText(responseFile, rsp.ToString());
+                tempFiles.Add(responseFile);
+                parameters.CompilerOptions = $"@\"{responseFile}\"";
+            }
+            catch
+            {
+                // Response file unavailable: fall back to the inline form. It may still hit the
+                // length limit, but failing to compile at all is strictly worse.
+                foreach (var path in strategy.Refs) parameters.ReferencedAssemblies.Add(path);
+            }
+
+            return provider.CompileAssemblyFromSource(parameters, fullCode);
+        }
+
+        private static string FirstCompilerError(System.CodeDom.Compiler.CompilerResults results)
+        {
+            foreach (System.CodeDom.Compiler.CompilerError error in results.Errors)
+            {
+                if (!error.IsWarning) return error.ErrorText ?? "(no message)";
+            }
+            return "(no errors reported)";
+        }
+
+        private static string DescribeCompilerErrors(System.CodeDom.Compiler.CompilerResults results)
+        {
+            var errors = new List<string>();
+            foreach (System.CodeDom.Compiler.CompilerError error in results.Errors)
+            {
+                if (!error.IsWarning)
+                    errors.Add($"Line {error.Line}: {error.ErrorText}");
+            }
+            return string.Join("\n", errors);
+        }
+
+        private static bool LooksLikeReferenceProblem(System.CodeDom.Compiler.CompilerResults results)
+        {
+            foreach (System.CodeDom.Compiler.CompilerError error in results.Errors)
+            {
+                if (error.IsWarning) continue;
+                var text = error.ErrorText ?? string.Empty;
+                if (text.IndexOf("is defined in an assembly that is not referenced", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("defined multiple times", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("predefined type", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("core assembly", StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    text.IndexOf("Metadata file", StringComparison.OrdinalIgnoreCase) >= 0)
+                    return true;
+            }
+            return false;
         }
 
         // ───────── search_hierarchy ─────────
