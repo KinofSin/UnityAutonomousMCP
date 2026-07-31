@@ -131,6 +131,25 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       'ConditionGroup.conditions'` warning and `Cannot add menu item 'Tools/YUCP/Other…'`.
       Third-party, but they are noise in every `read_console` and worth knowing are expected.
 
+## LEAF optimization (2026-07-31, first real pass — not a test)
+
+- [x] **Pass 1: six 2048² normal maps → 1024.** `Texture VRAM (MB)` 187 → 139 (−48). Textures
+      > 1024: 26 → 20. Checkpoint `20260731-152805-e5e207`.
+- [x] **Pass 2: two 2048² matcaps (`Skin4`, `Neon`) → 1024.** 139 → 123 (−64 cumulative, −34%).
+      Textures > 1024: 20 → 18. Checkpoint `20260731-153352-6cf4b8`. Separate checkpoint per pass,
+      so either is revertible on its own.
+- [x] Verified after each pass: zero console errors, no other metric moved (polys, bones,
+      PhysBones, blendshapes, param cost all identical), and a scene capture confirms the avatar
+      renders correctly — including the matcap-driven collar hardware.
+- [x] **`Texture VRAM (MB)` reads ~2× real GPU VRAM.** `Profiler.GetRuntimeMemorySizeLong` counts
+      the CPU-side copy too in the Editor. Confirmed by format: `normal 1` is DXT5 2048² with mips
+      = 5.59 MB on the GPU but reports 11.19 MB; `white` is DXT1 = 2.80 MB but reports 5.59 MB.
+      So LEAF went ~93 → ~62 MB of actual GPU texture memory, crossing under VRChat's 75 MB
+      "Good" line. The metric is exact for deltas — just halve it before quoting a rank.
+- [ ] Remaining headroom if wanted: `T_Shine_CM` cubemap (8.39 MB at 1024), `AlphalMap Eliza`
+      hair alpha mask and the 2048 albedos (`09`, `Aurora Alpha; Sleepy 9`, `Grayy 2`, `5`).
+      Albedo downscales are visible, so those are a judgement call, not autonomous Tier 1.
+
 ## Third-party test noise (not ours — do not chase)
 
 The full EditMode suite is **260 tests: 236 pass, 17 fail, 7 skip**. Every one of the 17 belongs
