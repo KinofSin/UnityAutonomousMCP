@@ -214,8 +214,15 @@ function toMarkdown(slug, d) {
     lines.push("| object | active | polys | share | mats | driven by | polys if removed | rank after |");
     lines.push("|---|---|---|---|---|---|---|---|");
     for (const c of cost.candidates ?? []) {
+      // "~" marks blendshape/material animation only: it targets the object but nothing
+      // switches it off, so it is not a reason to leave the object alone.
+      const drivers = c.driven
+        ? c.drivenBySummary ?? "-"
+        : c.animatedOnly
+          ? `~ ${c.referencedBySummary ?? "animated"}`
+          : "-";
       lines.push(
-        `| ${c.path} | ${c.active ? "on" : "**OFF**"} | ${c.polygons} | ${pct(c.shareOfPolygons)} | ${c.materialSlots} | ${c.drivenBySummary ?? "-"} | ${c.ifRemoved?.polygons} | ${c.ifRemoved?.polygonRank} |`
+        `| ${c.path} | ${c.active ? "on" : "**OFF**"} | ${c.polygons} | ${pct(c.shareOfPolygons)} | ${c.materialSlots} | ${drivers} | ${c.ifRemoved?.polygons} | ${c.ifRemoved?.polygonRank} |`
       );
     }
     lines.push("");

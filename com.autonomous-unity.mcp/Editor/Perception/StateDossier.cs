@@ -518,14 +518,17 @@ namespace AutonomousMcp.Editor.Perception
                 physBones = e.PhysBones,
                 physBoneColliders = e.PhysBoneColliders,
                 driven = e.IsDriven,
+                animatedOnly = !e.IsDriven && e.IsReferenced,
                 drivenBy = e.DrivenBy.Select(d => new
                 {
                     kind = d.Kind,
                     label = d.Label,
                     source = d.Source,
-                    parameter = d.Parameter
+                    parameter = d.Parameter,
+                    controls = d.Controls
                 }).ToList(),
                 drivenBySummary = e.DrivenBySummary,
+                referencedBySummary = e.ReferencedBySummary,
                 shareOfPolygons = Math.Round(report.ShareOfPolygons(e.Polygons), 4),
                 ifRemoved = Project(report.Without(e.Polygons, e.MaterialSlots))
             }).ToList();
@@ -574,8 +577,12 @@ namespace AutonomousMcp.Editor.Perception
                 candidates,
                 pc = PcBudgets,
                 note = "Costs include INACTIVE objects on purpose — VRChat's stats count renderers " +
-                       "with includeInactive. 'disabled' is NOT 'unused': check drivenBy (animation " +
-                       "FX / VRCFury / Modular Avatar). Exclusive VRAM is reclaimed by deleting; " +
+                       "with includeInactive. 'disabled' is NOT 'unused': check driven, which is true " +
+                       "only when a menu toggle switches the object (m_IsActive / m_Enabled curve) or " +
+                       "VRCFury / Modular Avatar references it — those break on delete. animatedOnly " +
+                       "means blendshape or material curves target it and nothing more, which is safe " +
+                       "to remove and is common enough (one hue-shift slider) to ignore. Exclusive " +
+                       "VRAM is reclaimed by deleting; " +
                        "shared is not. Bones are NOT reclaimed by deleting a renderer. Editor VRAM " +
                        "over-reports ~2×. 'Over' means past the highest published VRChat tier. " +
                        "Removing a prefab-instance child is an override — upload keeps it, prefab " +

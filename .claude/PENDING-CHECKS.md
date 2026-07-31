@@ -297,3 +297,31 @@ failure whose name is under `AutonomousMcp.SelfTest`.
       which is very likely why `Body` alone is 13.47 MB. Setting it to `None` is the largest
       mesh-memory win available, but it changes expression shading — usually imperceptible,
       occasionally not. Semi-visual, so not autonomous Tier 1.
+
+## Driven-detection precision fix (2026-07-31)
+
+- [x] **`driven` now means *controlled*, not *animated*.** The first cut counted any animation
+      binding, which marked 17 of 19 LEAF renderers driven — one Hue Shift slider targets every
+      material, so the flag fired almost everywhere and protected nothing. It now requires an
+      `m_IsActive`/`m_Enabled` curve or a direct VRCFury/MA reference; blendshape and material
+      curves set `animatedOnly` and are safe to delete. Verified against LEAF's FX controller:
+      **15 activeness toggles**, and exactly `Body` + `TOP Bodysuit` animated-only.
+- [x] Side effect worth knowing: per-object labels got readable. `ANIMAL DOG` used to read
+      `FX: Dog; FX: Hue Shift`; it now reads `FX: Dog`.
+- [x] **LEAF still has 0 undriven disabled objects** — not a detection bug, the honest answer.
+      `FT_Debug` is held by VRCFury `BlendShapeLink`, so the earlier note calling it the safe
+      smoke-test target was wrong. There is no free object on this avatar; use a scratch avatar
+      for the manual deletion test.
+- [x] Full EditMode suite: **264 tests, 240 passed, 17 failed, 7 skipped** — the same 17 YUCP
+      failures as the documented baseline, zero in this package. Closes the regression check the
+      cleanup plan asked for.
+
+## TraceAndOptimize on LEAF (2026-07-31)
+
+- [x] Kept, and the scene saved (`Assets/OPEN ME PLZ.unity`). Inert at edit time — NDMF runs it on
+      a clone at build, so the editor hierarchy is untouched.
+- [x] Measured gain is **-33 bones and nothing else**. Polygons, material slots and skinned meshes
+      are unchanged: the 15 wardrobe toggles animate renderer enablement, and AAO will not merge
+      meshes whose activeness differs. It moves no rank on this avatar.
+- [ ] **Unverified on an actual upload.** Its defaults include blendshape freezing and unused-object
+      removal, so confirm on a private test avatar before trusting it on the public one.

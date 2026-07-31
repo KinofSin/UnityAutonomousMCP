@@ -18,6 +18,17 @@ namespace AutonomousMcp.Editor.Perception
         public string Source;
         /// <summary>Animator parameter when known.</summary>
         public string Parameter;
+
+        /// <summary>
+        /// True when deleting the object breaks this driver outright: an activeness curve
+        /// (a menu toggle switching the object on/off) or a direct component reference.
+        ///
+        /// False for property-only curves — blendshape, material and transform animation.
+        /// Those merely lose a target. Counting them made almost every renderer on a real
+        /// avatar look "driven" (one hue-shift slider touching every material is enough),
+        /// which buried the handful of objects a wardrobe menu actually controls.
+        /// </summary>
+        public bool Controls;
     }
 
     /// <summary>
@@ -54,10 +65,18 @@ namespace AutonomousMcp.Editor.Perception
             return result;
         }
 
-        public static string Summarize(IList<ObjectDriver> drivers)
+        public static string Summarize(IList<ObjectDriver> drivers) => Summarize(drivers, false);
+
+        /// <param name="controllingOnly">
+        /// Restrict to drivers that break when the object is deleted. Pass true wherever the
+        /// answer decides a warning; pass false for informational listings.
+        /// </param>
+        public static string Summarize(IList<ObjectDriver> drivers, bool controllingOnly)
         {
             if (drivers == null || drivers.Count == 0) return "-";
-            return string.Join("; ", drivers.Select(d => d.Label).Distinct().Take(3));
+            var source = controllingOnly ? drivers.Where(d => d.Controls) : drivers;
+            var labels = source.Select(d => d.Label).Distinct().Take(3).ToList();
+            return labels.Count > 0 ? string.Join("; ", labels) : "-";
         }
 
         private static void CollectAnimationDrivers(
@@ -72,29 +91,51 @@ namespace AutonomousMcp.Editor.Perception
                 foreach (var clip in controller.animationClips)
                 {
                     if (clip == null) continue;
-                    var hit = new HashSet<int>();
+                    var controlled = new HashSet<int>();
+                    var touched = new HashSet<int>();
                     foreach (var binding in AnimationUtility.GetCurveBindings(clip))
-                        MatchBinding(binding.path, byRelPath, hit);
+                        MatchBinding(binding.path, byRelPath, IsActiveness(binding) ? controlled : touched);
                     foreach (var binding in AnimationUtility.GetObjectReferenceCurveBindings(clip))
-                        MatchBinding(binding.path, byRelPath, hit);
+                        MatchBinding(binding.path, byRelPath, touched);
 
                     paramByClip.TryGetValue(clip, out var param);
-                    foreach (var id in hit)
+                    var label = string.IsNullOrEmpty(param)
+                        ? $"FX: {clip.name}"
+                        : $"FX: {param}";
+
+                    foreach (var id in controlled)
                     {
-                        var label = string.IsNullOrEmpty(param)
-                            ? $"FX: {clip.name}"
-                            : $"FX: {param}";
                         Add(result, id, new ObjectDriver
                         {
                             Kind = "animation",
                             Label = label,
                             Source = clip.name,
-                            Parameter = param
+                            Parameter = param,
+                            Controls = true
+                        });
+                    }
+                    foreach (var id in touched)
+                    {
+                        if (controlled.Contains(id)) continue;
+                        Add(result, id, new ObjectDriver
+                        {
+                            Kind = "animation",
+                            Label = label,
+                            Source = clip.name,
+                            Parameter = param,
+                            Controls = false
                         });
                     }
                 }
             }
         }
+
+        /// <summary>
+        /// m_IsActive is GameObject.SetActive and m_Enabled is the component/renderer switch —
+        /// between them, how every VRChat menu toggle turns a wardrobe item on and off.
+        /// </summary>
+        private static bool IsActiveness(EditorCurveBinding binding) =>
+            binding.propertyName == "m_IsActive" || binding.propertyName == "m_Enabled";
 
         private static void MatchBinding(
             string bindingPath,
@@ -254,7 +295,10 @@ namespace AutonomousMcp.Editor.Perception
                                 Kind = kind,
                                 Label = $"{labelPrefix}: {contentLabel}",
                                 Source = c.GetType().Name,
-                                Parameter = null
+                                Parameter = null,
+                                // A build-time component holding a direct reference breaks on
+                                // delete regardless of what it does with the object.
+                                Controls = true
                             });
                             break;
                         }
@@ -316,7 +360,14 @@ namespace AutonomousMcp.Editor.Perception
             if (!map.TryGetValue(id, out var list))
                 map[id] = list = new List<ObjectDriver>();
             // Dedup by label so the same clip/param doesn't spam.
-            if (list.Any(x => x.Label == d.Label && x.Kind == d.Kind)) return;
+            var existing = list.FirstOrDefault(x => x.Label == d.Label && x.Kind == d.Kind);
+            if (existing != null)
+            {
+                // Two clips can share a label while only one carries the activeness curve;
+                // whichever arrives second must not downgrade the object to property-only.
+                if (d.Controls) existing.Controls = true;
+                return;
+            }
             list.Add(d);
         }
 

@@ -298,6 +298,66 @@ namespace AutonomousMcp.SelfTest
         }
 
         [Test]
+        public void Cost_does_not_treat_property_animation_as_driven()
+        {
+            // A blendshape or material curve targets an object without ever switching it off.
+            // Counting that as "driven" marked every renderer on a real avatar and left the
+            // cleanup window with nothing safe to select.
+            var root = new GameObject("CostAnimatedRoot");
+            AnimationClip clip = null;
+            AnimatorController ctrl = null;
+            try
+            {
+                AddRenderer(root, "Body", 200, active: true);
+                AddRenderer(root, "Hoodie", 100, active: false);
+
+                clip = new AnimationClip { name = "Hoodie" };
+                // Shrinkwrap: Hoodie is toggled, Body is only reshaped.
+                AnimationUtility.SetEditorCurve(
+                    clip,
+                    EditorCurveBinding.FloatCurve("Hoodie", typeof(GameObject), "m_IsActive"),
+                    AnimationCurve.Constant(0, 1, 1f));
+                AnimationUtility.SetEditorCurve(
+                    clip,
+                    EditorCurveBinding.FloatCurve("Body", typeof(SkinnedMeshRenderer), "blendShape.Shrink"),
+                    AnimationCurve.Constant(0, 1, 100f));
+
+                ctrl = new AnimatorController { name = "TestFX2" };
+                ctrl.AddLayer("FX");
+                var sm = ctrl.layers[0].stateMachine;
+                sm.AddState("On").motion = clip;
+
+                var animator = root.AddComponent<Animator>();
+                animator.runtimeAnimatorController = ctrl;
+
+                var report = AvatarCost.Build(root, root.scene);
+
+                var body = report.Entries.Find(e => e.Name == "Body");
+                Assert.IsNotNull(body);
+                Assert.IsTrue(body.IsReferenced, "the clip does target Body");
+                Assert.IsFalse(body.IsDriven, "a blendshape curve must not protect Body from removal");
+                Assert.AreEqual("-", body.DrivenBySummary);
+
+                var hoodie = report.Entries.Find(e => e.Name == "Hoodie");
+                Assert.IsNotNull(hoodie);
+                Assert.IsTrue(hoodie.IsDriven, "an m_IsActive curve is a real toggle");
+                Assert.AreEqual(1, report.InactiveDriven);
+
+                var cost = CostSection(root);
+                var candidates = (JArray)cost["candidates"];
+                var bodyRow = candidates.First(t => t.Value<string>("name") == "Body");
+                Assert.IsFalse(bodyRow.Value<bool>("driven"));
+                Assert.IsTrue(bodyRow.Value<bool>("animatedOnly"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+                if (clip != null) Object.DestroyImmediate(clip);
+                if (ctrl != null) Object.DestroyImmediate(ctrl);
+            }
+        }
+
+        [Test]
         public void ComputeStateHash_stable_for_same_scene_root()
         {
             var root = new GameObject("DossierHashRoot");

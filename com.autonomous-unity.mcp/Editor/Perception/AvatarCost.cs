@@ -30,8 +30,22 @@ namespace AutonomousMcp.Editor.Perception
         public int PhysBoneColliders;
         public List<ObjectDriver> DrivenBy = new List<ObjectDriver>();
 
-        public bool IsDriven => DrivenBy != null && DrivenBy.Count > 0;
-        public string DrivenBySummary => AvatarReferences.Summarize(DrivenBy);
+        /// <summary>
+        /// A menu toggle or a build-time component controls this object, so deleting it breaks
+        /// something a user can see. Property-only animation deliberately does NOT count: a single
+        /// hue-shift slider targets every material on the avatar, and treating that as "driven"
+        /// marked all 19 renderers on a real avatar and left zero genuinely free objects.
+        /// </summary>
+        public bool IsDriven => DrivenBy != null && DrivenBy.Any(d => d.Controls);
+
+        /// <summary>Anything at all animates or references this object — the weaker signal.</summary>
+        public bool IsReferenced => DrivenBy != null && DrivenBy.Count > 0;
+
+        /// <summary>Only the drivers that break on delete.</summary>
+        public string DrivenBySummary => AvatarReferences.Summarize(DrivenBy, true);
+
+        /// <summary>Every driver, controlling or not.</summary>
+        public string ReferencedBySummary => AvatarReferences.Summarize(DrivenBy);
 
         public GameObject Resolve() => EditorUtility.InstanceIDToObject(InstanceId) as GameObject;
     }

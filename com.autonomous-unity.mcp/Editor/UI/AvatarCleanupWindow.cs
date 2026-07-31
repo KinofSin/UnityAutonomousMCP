@@ -21,8 +21,10 @@ namespace AutonomousMcp.Editor.UI
     /// it is reversible two ways without duplicating the agent's permission layer. Asset edits are
     /// deliberately still out of scope here — those are not undoable and stay with the agent.
     ///
-    /// "Disabled" is NOT "unused". Objects driven by FX clips / VRCFury / Modular Avatar are
-    /// wardrobe toggles; bulk-select only picks undriven ones.
+    /// "Disabled" is NOT "unused". Objects a menu toggle switches on and off, or that VRCFury /
+    /// Modular Avatar reference directly, are live wardrobe items; bulk-select skips them. Objects
+    /// merely animated by blendshape or material curves are not protected — that signal fires on
+    /// nearly every renderer and protects nothing if you honour it.
     /// </summary>
     internal sealed class AvatarCleanupWindow : EditorWindow
     {
@@ -110,7 +112,10 @@ namespace AutonomousMcp.Editor.UI
                     _onlyDisabled, new GUIContent("Disabled", "Show only objects that are switched off"),
                     EditorStyles.toolbarButton, GUILayout.Width(70));
                 _onlyUndriven = GUILayout.Toggle(
-                    _onlyUndriven, new GUIContent("Undriven", "Show only objects with no FX/VRCFury/MA driver"),
+                    _onlyUndriven,
+                    new GUIContent("Undriven",
+                        "Show only objects no menu toggle / VRCFury / MA controls. " +
+                        "Blendshape and material animation does not count as control."),
                     EditorStyles.toolbarButton, GUILayout.Width(70));
 
                 GUILayout.FlexibleSpace();
@@ -143,7 +148,8 @@ namespace AutonomousMcp.Editor.UI
                         $"{_report.InactiveObjects} disabled ({_report.InactivePolygons:N0} polys): " +
                         $"{_report.InactiveDriven} menu-driven wardrobe ({_report.InactiveDrivenPolygons:N0} polys), " +
                         $"{_report.InactiveUndriven} undriven ({_report.InactiveUndrivenPolygons:N0} polys). " +
-                        "VRChat counts all of them — but driven ones are live toggles, not free space.",
+                        "VRChat counts all of them — but driven ones are live toggles, not free space. " +
+                        "Objects only touched by blendshape/material curves count as undriven.",
                         EditorStyles.wordWrappedMiniLabel);
 
                     if (GUILayout.Button(
@@ -228,7 +234,7 @@ namespace AutonomousMcp.Editor.UI
                         GUILayout.Label(excl > 0.01 ? excl.ToString("F1") : "-", GUILayout.Width(52));
                         GUILayout.Label(e.PhysBones > 0 ? e.PhysBones.ToString() : "-", GUILayout.Width(28));
                         GUILayout.Label(e.Active ? "on" : "OFF", GUILayout.Width(40));
-                        GUILayout.Label(new GUIContent(e.DrivenBySummary, e.DrivenBySummary), GUILayout.MinWidth(100));
+                        DrawDrivenBy(e);
 
                         if (GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(40)))
                         {
@@ -242,6 +248,36 @@ namespace AutonomousMcp.Editor.UI
                     }
                 }
             }
+        }
+
+        /// <summary>
+        /// Controlling drivers read plainly; a purely animated object is dimmed and prefixed so the
+        /// column never implies "do not touch" for something only a hue-shift slider targets.
+        /// </summary>
+        private void DrawDrivenBy(CostEntry e)
+        {
+            if (e.IsDriven)
+            {
+                GUILayout.Label(new GUIContent(e.DrivenBySummary, e.ReferencedBySummary),
+                    GUILayout.MinWidth(100));
+                return;
+            }
+
+            if (!e.IsReferenced)
+            {
+                GUILayout.Label("-", GUILayout.MinWidth(100));
+                return;
+            }
+
+            var prev = GUI.color;
+            GUI.color = new Color(prev.r, prev.g, prev.b, 0.55f);
+            GUILayout.Label(
+                new GUIContent(
+                    "~ " + e.ReferencedBySummary,
+                    "Animated but not switched on/off — blendshape or material curves only. " +
+                    "Deleting it drops those curves' target, it does not break a menu toggle."),
+                GUILayout.MinWidth(100));
+            GUI.color = prev;
         }
 
         private void DrawFooter()
@@ -325,11 +361,17 @@ namespace AutonomousMcp.Editor.UI
 
             if (driven.Count > 0)
             {
-                message += $"\n\nWARNING: {driven.Count} are DRIVEN by FX / VRCFury / Modular Avatar:\n" +
+                message += $"\n\nWARNING: {driven.Count} are CONTROLLED by a menu toggle / VRCFury / Modular Avatar:\n" +
                     string.Join("\n", driven.Take(8).Select(t =>
                         $"  · {t.Entry.Name}: {t.Entry.DrivenBySummary}")) +
-                    "\nDeleting them breaks menu toggles / animation curves.";
+                    "\nDeleting them leaves dead menu controls.";
             }
+
+            var animatedOnly = targets.Where(t => !t.Entry.IsDriven && t.Entry.IsReferenced).ToList();
+            if (animatedOnly.Count > 0)
+                message +=
+                    $"\n\n{animatedOnly.Count} are animated but never switched off (blendshape / material " +
+                    "curves only). Those curves just lose a target — no menu breaks.";
 
             if (prefabs.Count > 0)
                 message +=
