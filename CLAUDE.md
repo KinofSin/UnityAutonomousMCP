@@ -52,3 +52,41 @@ Unity-side has **no headless test harness** — verify by opening the project in
 - `feat/unified-mcp` is the v2 mainline; public `origin` = `KinofSin/UnityAutonomousMCP`, private `private` = `KinofSin/UnityAutonomousMCP-v2` (pushed as `main`).
 - Commit and push freely to the **private** remote (`private` = `KinofSin/UnityAutonomousMCP-v2`) when work is verified — the user authorized this once off the public repo (2026-05-31). The manual-only rule applied to the public `origin`; keep that care for any public push.
 - Live Unity test project: `C:\VRChatProjectsAlcom\Leaf`.
+
+## Agents & Skills index (domain layer)
+
+Engine stance remains **Unity 2022.3.22f1 + VRChat SDK3**. Always-loaded references:
+
+- `.claude/docs/vrchat-reference.md` — SDK3, Avatars 3.0, PhysBones, PC/Quest ranks, Udon/worlds
+- `.claude/docs/unity-2022-reference.md` — 2022.3 APIs, uGUI, asmdef/testables, `??` pitfall, import/domain-reload
+- `.claude/docs/blender-reference.md` — Blender→Unity/VRChat export contract (docs only; no bpy bridge yet)
+
+**Agents** (`.claude/agents/`):
+
+| Agent | Use for |
+|---|---|
+| `vrchat-specialist` | SDK3 routing, Expressions, PhysBones, upload/project gotchas |
+| `vrchat-avatar-optimizer` | Hit Good/Excellent avatar rank; Quest twins |
+| `vrchat-world-optimizer` | Lightmaps, occlusion, Udon hot paths, draw calls |
+| `unity-2022-specialist` | 2022.3 API correctness, editor scripting, asmdef/tests |
+
+**Skills** (`.claude/skills/`):
+
+| Skill | Use for |
+|---|---|
+| `run-autonomous-unity-mcp` | Build Node relay, offline smoke, live bridge drive, EditMode tests |
+| `vrchat-avatar-audit` | Measured avatar audit + bounded optimization loop |
+| `vrchat-world-audit` | Measured world-scene audit + bounded optimization loop |
+| `unity-compile-fix` | Semi-automatic console/compile error loop (`unity-verify.mjs`) |
+| `3d-model-import-review` | FBX/GLB ModelImporter + glTFast/UnityGLTF soft-detect review |
+
+**Optimization loop** — the audit skills measure over the bridge, they do not parse prefab YAML:
+
+- **Step 0 — scene/avatar dossier** (before guessing inspector/material state): `node .claude/tools/scene-dossier.mjs avatar <goName>` or `… scene`. Pulls sectioned `unity_perception {action:"dossier"}` calls, writes `.claude/.vrc-state/dossier-<slug>.md` + `.json`, prints a ~40-line summary. Grep the artifact for a mesh/material; do not dump full Poiyomi property lists into chat (~87k tokens for a 28-mat avatar). `verify <slug>` rechecks `stateHash` (exit `1` = stale). Locked Poiyomi (`Hidden/Locked/…`) is flagged — per-property values are not meaningfully readable until unlocked.
+- `.claude/tools/vrc-loop.mjs` — records a baseline via `scan_avatar` / `unity_optimization` into `.claude/.vrc-state/` (gitignored) and prints a delta table each pass. Exit codes drive the loop: `0` improved/unchanged, `1` regressed, `2` bridge unreachable. Avatar resolve uses `search_hierarchy {include_inactive:true}` → `instanceId` because VRChat twins are normally inactive and `GameObject.Find` skips them.
+- One change per pass, 5 passes max. Tier 1 (AAO TraceAndOptimize if installed/off, then `manage_texture` `set_import_settings`, importer settings) is autonomous; Tier 2 (component removal) needs a `manage_checkpoint`; Tier 3 (geometry, bones, material merges, lightmap rebake) always asks.
+- `.claude/hooks/require-checkpoint.mjs` enforces the Tier-2 checkpoint. It is **inert unless `.claude/.vrc-state/` holds a baseline**. Manual HUD/menu checkpoints satisfy it via a bridge `manage_checkpoint list` query. Fail open if Unity is closed.
+- `.claude/tools/unity-verify.mjs` — `refresh_unity` + `read_console {level:"error"}` (never `get_compilation_errors`). Exit `0` clean / `1` errors / `2` bridge down. Requires Unity focused to recompile between passes.
+- `.claude/hooks/hud-drain.mjs` — `UserPromptSubmit` injects a `hud_poll` nudge when the Advisor outbox has pending items; `Stop` blocks once per ~60s (and respects `stop_hook_active`) so queued HUD items are not abandoned. Manual checkpoint: Advisor toolbar **Checkpoint** or `Window/Autonomous MCP/Create Checkpoint`.
+
+Studio org layer (technical-director / producer hierarchy) is **not** installed — optional later if structured design gates are wanted. Do not add a local `code-review` skill; the global `code-review@claude-plugins-official` plugin already covers that.

@@ -1,0 +1,89 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Bash(npm install*)",
+      "Bash(npm --workspace server run build*)",
+      "Bash(node server/dist/smokeTest.js*)",
+      "Bash(node .claude/skills/run-autonomous-unity-mcp/driver.mjs*)",
+      "Bash(node .claude/tools/vrc-loop.mjs*)",
+      "Bash(node .claude/tools/unity-verify.mjs*)",
+      "Bash(node .claude/tools/scene-dossier.mjs*)",
+      "Read(.claude/docs/**)",
+      "Read(CLAUDE.md)",
+      "Read(com.autonomous-unity.mcp/**)",
+      "Read(server/**)"
+    ],
+    "deny": [
+      "Bash(rm -rf *)",
+      "Bash(git push --force*)",
+      "Bash(git push -f *)",
+      "Bash(git reset --hard*)",
+      "Bash(git clean -f*)",
+      "Read(**/.env*)",
+      "Bash(*>.env*)"
+    ]
+  },
+  "hooks": {
+    "SessionStart": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/vrc-session-note.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "UserPromptSubmit": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/hud-drain.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "Stop": [
+      {
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/hud-drain.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash|manage_component|manage_gameobject|manage_prefab|manage_script|execute_csharp|execute_menu_item",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/require-checkpoint.mjs",
+            "timeout": 15
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "manage_checkpoint",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node .claude/hooks/require-checkpoint.mjs",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

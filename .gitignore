@@ -26,3 +26,17 @@ Thumbs.db
 .env
 .env.*
 .superpowers/
+
+# VRChat optimization loop state (machine-local measurements)
+.claude/.vrc-state/
+
+# .meta residue from the old repo-root Unity mount (mount the package SUBFOLDER instead).
+# Each of these shadows a path that is already ignored above.
+/node_modules.meta
+/package.json.meta
+/package-lock.json.meta
+/server.meta
+/server/**/*.meta
+
+# Generator scratch output
+tmp_*.png
