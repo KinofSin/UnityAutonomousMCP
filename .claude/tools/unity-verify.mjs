@@ -12,40 +12,31 @@
 // Exit: 0 clean  1 errors present  2 bridge unreachable / tool error
 //
 // Env: BRIDGE=http://127.0.0.1:8080/mcp/tool  CLIENT=unity-verify
-const BRIDGE = process.env.BRIDGE || "http://127.0.0.1:8080/mcp/tool";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "./bridge.mjs";
+
+const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "unity-verify";
 const EXIT_OK = 0;
 const EXIT_ERRORS = 1;
 const EXIT_ERROR = 2;
 
+// A recompile is a domain reload, which drops the listener — the one thing this
+// harness is guaranteed to run into. Ride it out instead of reporting "Unity is
+// closed" at the exact moment Unity is doing what we asked.
 async function call(tool, params = {}, timeoutMs = 20000) {
-  let res;
-  try {
-    res = await fetch(BRIDGE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-MCP-Client": CLIENT },
-      body: JSON.stringify({ tool, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (e) {
-    console.error(
-      `error: bridge unreachable at ${BRIDGE} (${e?.name === "TimeoutError" ? "timed out" : String(e)})\n` +
-        "  Open Unity 2022.3.22f1 with the package mounted, then Window > Autonomous MCP > Settings > Server > Connect."
-    );
+  const r = await request(tool, params, {
+    client: CLIENT,
+    timeoutMs,
+    reconnectMs: 120000,
+    idempotent: READ_ONLY_TOOLS.has(tool) || tool === "refresh_unity",
+    onRetry: ({ kind, recovered }) =>
+      console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
+  });
+  if (!r.ok) {
+    console.error(r.kind === "tool" ? `error: ${tool} failed: ${r.message}` : `error: ${describe(r, BRIDGE)}`);
     process.exit(EXIT_ERROR);
   }
-  let json;
-  try {
-    json = await res.json();
-  } catch {
-    console.error(`error: bridge returned non-JSON (HTTP ${res.status})`);
-    process.exit(EXIT_ERROR);
-  }
-  if (!json?.success) {
-    console.error(`error: ${tool} failed: ${json?.error ?? JSON.stringify(json)}`);
-    process.exit(EXIT_ERROR);
-  }
-  return json.data ?? {};
+  return r.data ?? {};
 }
 
 async function main() {

@@ -20,8 +20,9 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "./bridge.mjs";
 
-const BRIDGE = process.env.BRIDGE || "http://127.0.0.1:8080/mcp/tool";
+const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "scene-dossier";
 const STATE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", ".vrc-state");
 
@@ -48,29 +49,19 @@ function slugify(s) {
   return String(s).trim().toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "unnamed";
 }
 
+// A dossier is a read-only pull across many sections; a domain reload part-way
+// through would otherwise discard every section already fetched.
 async function call(tool, params = {}, timeoutMs = 20000) {
-  let res;
-  try {
-    res = await fetch(BRIDGE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-MCP-Client": CLIENT },
-      body: JSON.stringify({ tool, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (e) {
-    fail(
-      `bridge unreachable at ${BRIDGE} (${e?.name === "TimeoutError" ? "timed out" : String(e)})\n` +
-        "  Open Unity 2022.3.22f1 with the package mounted, then Window > Autonomous MCP > Settings > Server > Connect."
-    );
-  }
-  let json;
-  try {
-    json = await res.json();
-  } catch {
-    fail(`bridge returned non-JSON (HTTP ${res.status})`);
-  }
-  if (!json?.success) fail(`${tool} failed: ${json?.error ?? JSON.stringify(json)}`);
-  return json.data ?? {};
+  const r = await request(tool, params, {
+    client: CLIENT,
+    timeoutMs,
+    reconnectMs: 120000,
+    idempotent: READ_ONLY_TOOLS.has(tool),
+    onRetry: ({ kind, recovered }) =>
+      console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
+  });
+  if (!r.ok) fail(r.kind === "tool" ? `${tool} failed: ${r.message}` : describe(r, BRIDGE));
+  return r.data ?? {};
 }
 
 function fail(msg) {

@@ -23,8 +23,9 @@
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "./bridge.mjs";
 
-const BRIDGE = process.env.BRIDGE || "http://127.0.0.1:8080/mcp/tool";
+const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "vrc-loop";
 const STATE_DIR = join(dirname(fileURLToPath(import.meta.url)), "..", ".vrc-state");
 
@@ -45,6 +46,13 @@ const AVATAR_METRICS = [
   { key: "physBoneColliders", label: "PhysBone colliders", pick: (d) => d?.physBoneColliderCount },
   { key: "contacts", label: "Contacts (recv+send)", pick: (d) => sum(d?.contactReceiverCount, d?.contactSenderCount) },
   { key: "exprParamCost", label: "Expr param cost", pick: (d) => d?.expressionParameterCost, budget: (d) => d?.expressionParameterBudget },
+  // scan_avatar reports geometry and components but nothing about textures, so
+  // until these existed the loop could not see its own primary Tier-1 lever
+  // (max size / crunch via manage_texture): a working texture pass measured as an
+  // all-zero delta, and the "stop after two unchanged passes" rule would end the
+  // run. Sourced from the dossier, which already computes per-texture bytes.
+  { key: "textureVramMB", label: "Texture VRAM (MB)", pick: (d) => d?.textureStats?.vramMB },
+  { key: "texturesOver1024", label: "Textures > 1024", pick: (d) => d?.textureStats?.over1024 },
 ];
 
 const WORLD_METRICS = [
@@ -70,29 +78,21 @@ function slugify(s) {
 // The editor dispatches tools serially on its main thread, so callers must
 // issue one request at a time. Non-generator tools get a 10s budget in-editor;
 // 20s here keeps the client from giving up before the dispatcher does.
+//
+// Tier-1 levers write to the AssetDatabase, which can trigger a domain reload and
+// drop the bridge mid-pass. Losing a baseline to that would waste the whole run,
+// so reconnect rather than abort.
 async function call(tool, params = {}, timeoutMs = 20000) {
-  let res;
-  try {
-    res = await fetch(BRIDGE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-MCP-Client": CLIENT },
-      body: JSON.stringify({ tool, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-  } catch (e) {
-    fail(
-      `bridge unreachable at ${BRIDGE} (${e?.name === "TimeoutError" ? "timed out" : String(e)})\n` +
-        "  Open Unity 2022.3.22f1 with the package mounted, then Window > Autonomous MCP > Settings > Server > Connect."
-    );
-  }
-  let json;
-  try {
-    json = await res.json();
-  } catch {
-    fail(`bridge returned non-JSON (HTTP ${res.status})`);
-  }
-  if (!json?.success) fail(`${tool} failed: ${json?.error ?? JSON.stringify(json)}`);
-  return json.data ?? {};
+  const r = await request(tool, params, {
+    client: CLIENT,
+    timeoutMs,
+    reconnectMs: 120000,
+    idempotent: READ_ONLY_TOOLS.has(tool),
+    onRetry: ({ kind, recovered }) =>
+      console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
+  });
+  if (!r.ok) fail(r.kind === "tool" ? `${tool} failed: ${r.message}` : describe(r, BRIDGE));
+  return r.data ?? {};
 }
 
 function fail(msg) {
@@ -176,7 +176,32 @@ async function resolveAvatarInstanceId(name) {
 async function scanAvatar(name) {
   const instanceId = await resolveAvatarInstanceId(name);
   const data = await call("scan_avatar", { instanceId });
+  data.textureStats = await scanTextures(instanceId);
   return { raw: data, metrics: extract(AVATAR_METRICS, data), budgets: budgets(AVATAR_METRICS, data) };
+}
+
+// Texture memory comes from the dossier, not scan_avatar. Only the summary is kept:
+// the per-texture list is large and belongs in the dossier artifact, not in state.
+async function scanTextures(instanceId) {
+  const d = await call(
+    "unity_perception",
+    { action: "dossier", instanceId, sections: ["textures"] },
+    60000
+  );
+  const list = d?.sections?.textures?.textures ?? [];
+  if (!list.length) return undefined;
+
+  let bytes = 0;
+  let over1024 = 0;
+  for (const t of list) {
+    bytes += Number(t?.runtimeBytes) || 0;
+    if ((Number(t?.maxSize) || 0) > 1024) over1024++;
+  }
+  return {
+    count: list.length,
+    vramMB: Math.round(bytes / 1048576),
+    over1024,
+  };
 }
 
 // unity_optimization always reports on the ACTIVE scene, so there is no path

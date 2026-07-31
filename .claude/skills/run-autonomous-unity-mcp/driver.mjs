@@ -21,8 +21,9 @@
 //
 // Env: BRIDGE=http://127.0.0.1:8080/mcp/tool  CLIENT=run-driver
 import { readFileSync } from "node:fs";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "../../tools/bridge.mjs";
 
-const BRIDGE = process.env.BRIDGE || "http://127.0.0.1:8080/mcp/tool";
+const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "run-driver";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -55,18 +56,19 @@ function parseParams(raw) {
 
 async function call(tool, params = {}, timeoutMs = 155000) {
   const t0 = Date.now();
-  try {
-    const res = await fetch(BRIDGE, {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "X-MCP-Client": CLIENT },
-      body: JSON.stringify({ tool, params }),
-      signal: AbortSignal.timeout(timeoutMs),
-    });
-    const json = await res.json();
-    return { elapsed: (Date.now() - t0) / 1000, json };
-  } catch (e) {
-    return { elapsed: (Date.now() - t0) / 1000, threw: String(e) };
-  }
+  const r = await request(tool, params, {
+    client: CLIENT,
+    timeoutMs,
+    reconnectMs: 120000,
+    idempotent: READ_ONLY_TOOLS.has(tool),
+    onRetry: ({ kind, recovered }) =>
+      console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
+  });
+  const elapsed = (Date.now() - t0) / 1000;
+  // Preserve the existing shape: `json` for anything the editor answered (including
+  // a tool-level failure), `threw` only for transport give-ups.
+  if (r.ok || r.kind === "tool") return { elapsed, json: r.json };
+  return { elapsed, threw: describe(r, BRIDGE) };
 }
 
 // Issue ONE bridge request at a time. The editor dispatches tools on its main

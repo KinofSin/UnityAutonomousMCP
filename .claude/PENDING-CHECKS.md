@@ -23,6 +23,18 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       corrected in `CLAUDE.md`, `unity-2022-reference.md`, `unity-compile-fix`, the
       `unity-2022-specialist` agent, and `unity-verify.mjs`.
 
+## Verified 2026-07-31 (second pass — loop end to end on LEAF)
+
+- [x] Shared `bridge.mjs` reconnect wired into all four harnesses. Proved itself immediately:
+      a `driver.mjs health` hit a live domain reload and rode `network → refused → back` across
+      five retries where it previously died with "bridge unreachable — open Unity".
+- [x] Full Tier-1 optimization pass on LEAF, end to end: dossier → baseline → checkpoint →
+      shrink one normal map (2048→1024) → delta → restore. Texture VRAM 187 → 179 MB, then
+      187 again after restore. Avatar left byte-identical to how it was found and the
+      checkpoint deleted.
+- [x] Found and fixed while doing it: `AVATAR_METRICS` tracked no texture memory, so the
+      loop was blind to its own main Tier-1 lever.
+
 ## Still needs Unity open
 
 - [ ] Untested branch: `CaptureAssets` auto-creating a checkpoint when **zero** exist.
