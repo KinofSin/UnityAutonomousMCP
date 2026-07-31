@@ -116,6 +116,47 @@ namespace AutonomousMcp.Editor.Advisor
             return copy;
         }
 
+        // Inspect without draining — HUD "honest queue" banner + per-item cancel.
+        public static List<OutboxItem> GetOutbox()
+        {
+            EnsureLoaded();
+            return new List<OutboxItem>(_outbox);
+        }
+
+        public static bool RemoveOutboxAt(int index)
+        {
+            EnsureLoaded();
+            if (index < 0 || index >= _outbox.Count) return false;
+            _outbox.RemoveAt(index);
+            PersistOutbox();
+            return true;
+        }
+
+        public static void ClearOutbox()
+        {
+            EnsureLoaded();
+            _outbox.Clear();
+            PersistOutbox();
+        }
+
+        public static bool DismissAdvice(string id)
+        {
+            EnsureLoaded();
+            if (string.IsNullOrEmpty(id)) return false;
+            var idx = _advice.FindIndex(a => a != null && a.id == id);
+            if (idx < 0) return false;
+            _advice.RemoveAt(idx);
+            PersistAdvice();
+            return true;
+        }
+
+        public static void ClearAdvice()
+        {
+            EnsureLoaded();
+            _advice.Clear();
+            PersistAdvice();
+        }
+
         // ── test seams ───────────────────────────────────────────────────────────────
 
         // Full reset: clears RAM and SessionState (test isolation).

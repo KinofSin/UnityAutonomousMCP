@@ -2283,23 +2283,48 @@ namespace AutonomousMcp.Editor
 
         internal static AutonomousMcpToolResponse HandleGetMaterialProperties(JObject args)
         {
+            // Prefer GameObject + material_index (renderer slot). Fall back to a material asset
+            // by instanceId / Assets/...mat path / exact name — material instanceIds were
+            // previously rejected with a misleading "valid target by instanceId or name" error.
+            Material mat = null;
+            string gameObjectName = null;
+
             var target = ResolveGameObject(args);
-            if (target == null)
-                return Error("get_properties requires a valid target by instanceId or name.");
+            if (target != null)
+            {
+                var renderer = target.GetComponent<Renderer>();
+                if (renderer == null)
+                    return Error($"No Renderer found on '{target.name}'.");
 
-            var renderer = target.GetComponent<Renderer>();
-            if (renderer == null)
-                return Error($"No Renderer found on '{target.name}'.");
+                var materialIndex = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex") ?? 0;
+                var materials = renderer.sharedMaterials;
+                if (materialIndex < 0 || materialIndex >= materials.Length)
+                    return Error($"Material index {materialIndex} out of range.");
 
-            var materialIndex = args.Value<int?>("material_index") ?? args.Value<int?>("materialIndex") ?? 0;
-            var materials = renderer.sharedMaterials;
-            if (materialIndex < 0 || materialIndex >= materials.Length)
-                return Error($"Material index {materialIndex} out of range.");
+                mat = materials[materialIndex];
+                gameObjectName = target.name;
+            }
+            else
+            {
+                var instanceId = args.Value<int?>("instanceId");
+                if (instanceId.HasValue)
+                    mat = EditorUtility.InstanceIDToObject(instanceId.Value) as Material;
 
-            var mat = materials[materialIndex];
+                if (mat == null)
+                    mat = ResolveMaterialAsset(args, out _);
+
+                if (mat == null)
+                {
+                    return Error(
+                        "get_properties requires a GameObject (instanceId/name + material_index) " +
+                        "or a material asset (material instanceId / material: Assets/...mat path or exact name).");
+                }
+            }
+
             if (mat == null) return Error("Material is null.");
 
             var shader = mat.shader;
+            if (shader == null) return Error($"Material '{mat.name}' has no shader.");
             var propList = new JArray();
             int propCount = shader.GetPropertyCount();
 
@@ -2346,8 +2371,10 @@ namespace AutonomousMcp.Editor
             return Success(JToken.FromObject(new
             {
                 action = "get_properties",
-                gameObject = target.name,
+                gameObject = gameObjectName,
                 materialName = mat.name,
+                materialPath = AssetDatabase.GetAssetPath(mat),
+                materialInstanceId = mat.GetInstanceID(),
                 shader = shader.name,
                 count = propList.Count,
                 properties = propList

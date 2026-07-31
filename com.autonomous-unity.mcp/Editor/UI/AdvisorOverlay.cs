@@ -16,9 +16,12 @@ namespace AutonomousMcp.Editor.UI
         {
             var advice = AdvisorStore.GetAdvice().Count;
             var pending = AdvisorStore.PendingCount();
+            var conn = AutonomousMcpConnection.Current;
+            var connected = conn != null && conn.IsConnected;
+            var link = connected ? "●" : "○";
             var label = pending > 0
-                ? $"Advisor — {advice} advice · {pending} queued ↑"
-                : $"Advisor — {advice} advice";
+                ? $"{link} Advisor — {advice} advice · {pending} queued ↑"
+                : $"{link} Advisor — {advice} advice";
             if (GUILayout.Button(label))
                 AdvisorHudWindow.Open();
         }

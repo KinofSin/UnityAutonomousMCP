@@ -86,5 +86,78 @@ namespace AutonomousMcp.SelfTest
             Assert.AreEqual(1, AdvisorStore.PendingCount());
             Assert.AreEqual("note", AdvisorStore.DrainOutbox()[0].type);
         }
+
+        [Test]
+        public void GetOutbox_inspects_without_draining()
+        {
+            AdvisorStore.Enqueue("note", "{\"text\":\"a\"}");
+            AdvisorStore.Enqueue("quick_ask", "{\"key\":\"whats_next\"}");
+            var peek = AdvisorStore.GetOutbox();
+            Assert.AreEqual(2, peek.Count);
+            Assert.AreEqual(2, AdvisorStore.PendingCount(), "GetOutbox must not drain");
+            Assert.AreEqual("note", peek[0].type);
+        }
+
+        [Test]
+        public void RemoveOutboxAt_removes_one_item()
+        {
+            AdvisorStore.Enqueue("note", "{\"text\":\"a\"}");
+            AdvisorStore.Enqueue("note", "{\"text\":\"b\"}");
+            AdvisorStore.Enqueue("note", "{\"text\":\"c\"}");
+            Assert.IsTrue(AdvisorStore.RemoveOutboxAt(1));
+            Assert.IsFalse(AdvisorStore.RemoveOutboxAt(99));
+            var left = AdvisorStore.GetOutbox();
+            Assert.AreEqual(2, left.Count);
+            StringAssert.Contains("\"text\":\"a\"", left[0].payload);
+            StringAssert.Contains("\"text\":\"c\"", left[1].payload);
+        }
+
+        [Test]
+        public void ClearOutbox_empties_queue()
+        {
+            AdvisorStore.Enqueue("note", "{}");
+            AdvisorStore.Enqueue("console", "{}");
+            AdvisorStore.ClearOutbox();
+            Assert.AreEqual(0, AdvisorStore.PendingCount());
+            Assert.AreEqual(0, AdvisorStore.GetOutbox().Count);
+        }
+
+        [Test]
+        public void DismissAdvice_removes_by_id()
+        {
+            AdvisorStore.AddText("keep", "info");
+            AdvisorStore.AddCard("drop-me", "Title", "Body", null);
+            Assert.IsTrue(AdvisorStore.DismissAdvice("drop-me"));
+            Assert.IsFalse(AdvisorStore.DismissAdvice("nope"));
+            var all = AdvisorStore.GetAdvice();
+            Assert.AreEqual(1, all.Count);
+            Assert.AreEqual("keep", all[0].text);
+        }
+
+        [Test]
+        public void ClearAdvice_empties_feed()
+        {
+            AdvisorStore.AddText("a", "info");
+            AdvisorStore.AddText("b", "warning");
+            AdvisorStore.ClearAdvice();
+            Assert.AreEqual(0, AdvisorStore.GetAdvice().Count);
+        }
+
+        [Test]
+        public void New_APIs_survive_domain_reload()
+        {
+            AdvisorStore.AddText("advice", "info");
+            AdvisorStore.Enqueue("note", "{\"text\":\"n\"}");
+            var id = AdvisorStore.GetAdvice()[0].id;
+
+            AdvisorStore.DropInMemoryForTests();
+            AdvisorStore.EnsureLoaded();
+
+            Assert.AreEqual(1, AdvisorStore.GetOutbox().Count);
+            Assert.IsTrue(AdvisorStore.DismissAdvice(id));
+            Assert.AreEqual(0, AdvisorStore.GetAdvice().Count);
+            Assert.IsTrue(AdvisorStore.RemoveOutboxAt(0));
+            Assert.AreEqual(0, AdvisorStore.PendingCount());
+        }
     }
 }

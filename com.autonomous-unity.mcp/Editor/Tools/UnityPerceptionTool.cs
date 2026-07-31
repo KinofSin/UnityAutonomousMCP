@@ -1,6 +1,7 @@
 using System.Collections.Generic;
 using System.Linq;
 using AutonomousMcp.Editor.Core;
+using AutonomousMcp.Editor.Perception;
 using Newtonsoft.Json.Linq;
 using UnityEditor;
 using UnityEngine;
@@ -10,7 +11,7 @@ namespace AutonomousMcp.Editor.Tools
 {
     /// <summary>
     /// unity_perception — compact text "world snapshot" so an LLM can build context with one call.
-    /// Combines scene digest + project summary + active asset.
+    /// Combines scene digest + project summary + active asset. Also hosts the sectioned dossier.
     /// </summary>
     public static class UnityPerceptionTool
     {
@@ -18,7 +19,7 @@ namespace AutonomousMcp.Editor.Tools
         private static void Register()
         {
             ToolRegistry.Register("unity_perception", ToolMode.Read, ToolCategory.Diagnostic,
-                "One-shot world snapshot for AI context. Actions: snapshot, scene_digest, project_digest.",
+                "One-shot world snapshot for AI context. Actions: snapshot, scene_digest, project_digest, dossier.",
                 Handle);
         }
 
@@ -39,6 +40,19 @@ namespace AutonomousMcp.Editor.Tools
                     return Ok(new { action, scene = SceneDigest(args) });
                 case "project_digest":
                     return Ok(new { action, project = ProjectDigest() });
+                case "dossier":
+                {
+                    var payload = StateDossier.Build(args);
+                    var token = JToken.FromObject(payload);
+                    if (token is JObject jo && jo.Value<bool?>("success") == false)
+                        return Err(jo.Value<string>("error") ?? "dossier failed");
+                    return new AutonomousMcpToolResponse
+                    {
+                        success = true,
+                        data = token,
+                        error = string.Empty
+                    };
+                }
                 default:
                     return Err($"Unsupported unity_perception action '{action}'.");
             }

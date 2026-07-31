@@ -34,6 +34,16 @@ namespace AutonomousMcp.Editor
         [InitializeOnLoadMethod]
         private static void TryAutoConnect()
         {
+            // Never start the bridge inside headless child processes. Unity's AssetImportWorker
+            // runs with -batchMode and also executes [InitializeOnLoadMethod]; if it auto-connects
+            // it grabs the default HTTP/TCP port before the interactive Editor can, forcing the
+            // real Editor onto a fallback port (8080 -> 8082) and routing all MCP traffic to a
+            // worker that has no live Editor/scene state. Only the interactive Editor should host.
+            if (Application.isBatchMode)
+            {
+                return;
+            }
+
             _settings = AutonomousMcpSettings.Load();
             if (_settings.AutoConnect)
             {
