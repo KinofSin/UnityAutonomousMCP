@@ -316,6 +316,24 @@ failure whose name is under `AutonomousMcp.SelfTest`.
       failures as the documented baseline, zero in this package. Closes the regression check the
       cleanup plan asked for.
 
+## Cleanup window manual delete — PASSED (2026-07-31)
+
+Run by the user on a duplicate of LEAF (`LEAF CLEANUP TEST`), deleting `ACC Glasses`.
+
+- [x] Arithmetic matches the projection exactly: 278,879 → **274,227** polys (−4,652) and 28 → 26
+      material slots. The window's "leaves N polys" footer was not lying.
+- [x] Checkpoint `20260731-203421-5fcd57` (`avatar-cleanup-20260731-203421`) written **before** the
+      delete, timestamped to the second the user clicked.
+- [x] Console clean, zero errors.
+- [x] The original `LEAF` was untouched at 18 entries / 278,879 polys — deleting from a duplicate
+      does not leak into the source prefab instance.
+- [x] Undo restores in **one** step and the group is named `Avatar cleanup: delete 1 object(s)`.
+      Verified twice: with an intervening selection change it took two Ctrl+Z (the first ate
+      Unity's own "Selection Change" entry, which is standard editor behaviour and not ours);
+      with nothing in between, exactly one. Redo re-applies it. Restored state was byte-for-byte
+      the original — 18 entries, 278,879 polys, 28 mats.
+- [x] Duplicate removed afterwards; scene roots back to the original set.
+
 ## Parked avatar root offered the whole avatar as free space (2026-07-31)
 
 - [x] **Found by looking at the window before running the manual delete test, not by the test.**
