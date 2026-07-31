@@ -1,0 +1,71 @@
+name: CI
+
+# Covers everything that does NOT need a licensed Unity editor. The EditMode suite
+# lives in unity-tests.yml because it needs Unity credentials as repo secrets.
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  relay:
+    name: Node MCP relay
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # `npm ci` is the usual choice, but package-lock.json is gitignored in this
+      # repo so there is no lockfile to install from. Commit the lockfile if
+      # reproducible installs are worth more than the current convention.
+      - name: Install
+        run: npm install --no-audit --no-fund
+
+      - name: Build (tsc)
+        run: npm run build
+
+      - name: Unit tests
+        run: npm --workspace server run test
+
+      - name: Planner/executor smoke
+        run: npm run smoke
+
+  agent-scripts:
+    name: Agent hooks and harnesses parse
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      # A syntax error in a hook breaks every Claude session in this repo and
+      # nothing else in CI would catch it — these files have no build step.
+      - name: node --check every .mjs
+        run: |
+          set -euo pipefail
+          found=0
+          while IFS= read -r -d '' f; do
+            node --check "$f"
+            echo "ok $f"
+            found=$((found + 1))
+          done < <(find .claude -name '*.mjs' -print0)
+          if [ "$found" -eq 0 ]; then
+            echo "no .mjs found under .claude — did the agent layer move?" >&2
+            exit 1
+          fi
+          echo "$found script(s) parsed"
+
+      - name: Hooks must be side-effect free with no state
+        run: |
+          set -euo pipefail
+          # SessionStart runs on every session; if it throws or hangs, the session
+          # starts broken. It must stay quiet and exit 0 on a clean checkout.
+          node .claude/hooks/vrc-session-note.mjs
+          echo "session-note exited $?"

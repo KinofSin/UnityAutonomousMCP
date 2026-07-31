@@ -1,0 +1,66 @@
+name: Unity EditMode tests
+
+# Manual-only on purpose. Running the EditMode suite in CI needs a licensed Unity
+# 2022.3.22f1, which means these repo secrets:
+#
+#   UNITY_LICENSE   contents of a returned .ulf (Personal), or
+#   UNITY_SERIAL    for Plus/Pro
+#   UNITY_EMAIL     Unity account email
+#   UNITY_PASSWORD  Unity account password
+#
+# Until they exist this workflow will not run, so it cannot redden the default CI.
+#
+# Caveat worth knowing before wiring it up: this repo's tests live in a package that
+# a VRChat project consumes, and the VRChat SDK is not resolvable from a bare CI
+# checkout. Expect the VRC-dependent paths to skip, and treat this as coverage of
+# AutonomousMcp.SelfTest only — not a substitute for running the suite in Leaf.
+
+on:
+  workflow_dispatch:
+    inputs:
+      unity_version:
+        description: Unity version to test against
+        required: false
+        default: 2022.3.22f1
+
+jobs:
+  editmode:
+    name: EditMode (AutonomousMcp.SelfTest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+
+      - name: Cache Library
+        uses: actions/cache@v4
+        with:
+          path: Library
+          key: Library-${{ hashFiles('Packages/manifest.json') }}
+          restore-keys: Library-
+
+      - name: Fail early without credentials
+        run: |
+          if [ -z "${{ secrets.UNITY_EMAIL }}" ]; then
+            echo "UNITY_EMAIL/UNITY_PASSWORD (+ UNITY_LICENSE or UNITY_SERIAL) are not set." >&2
+            echo "Add them as repository secrets before running this workflow." >&2
+            exit 1
+          fi
+
+      - uses: game-ci/unity-test-runner@v4
+        env:
+          UNITY_LICENSE: ${{ secrets.UNITY_LICENSE }}
+          UNITY_SERIAL: ${{ secrets.UNITY_SERIAL }}
+          UNITY_EMAIL: ${{ secrets.UNITY_EMAIL }}
+          UNITY_PASSWORD: ${{ secrets.UNITY_PASSWORD }}
+        with:
+          unityVersion: ${{ inputs.unity_version }}
+          testMode: editmode
+          artifactsPath: test-results
+          githubToken: ${{ secrets.GITHUB_TOKEN }}
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: editmode-results
+          path: test-results

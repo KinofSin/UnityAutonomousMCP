@@ -14,6 +14,13 @@ node server/dist/smokeTest.js            # planner/executor smoke (fake bridge, 
 Unity-side has **no headless test harness** — verify by opening the project in 2022.3.22f1
 (console must be error-free) and running EditMode tests via the live MCP bridge.
 
+CI (`.github/workflows/`): `ci.yml` runs on every push — Node relay build + smoke + `node --check`
+on every `.claude/**/*.mjs` (a hook syntax error otherwise breaks every session in this repo, and
+nothing else would catch it). `npm install`, not `npm ci`: `package-lock.json` is gitignored, so
+there is no lockfile to install from. `unity-tests.yml` is `workflow_dispatch`-only and needs
+`UNITY_LICENSE`/`UNITY_EMAIL`/`UNITY_PASSWORD` secrets; expect VRC-dependent tests to skip there
+because the VRChat SDK does not resolve from a bare CI checkout.
+
 ## Bridge
 - Transport host binds **HTTP 127.0.0.1:8080** (`POST /mcp/tool` body `{"tool","params"}`) and TCP 8081, only when `AutoConnect` is on.
 - **Registry tools** go through the permission gate; **legacy switch tools** bypass it.

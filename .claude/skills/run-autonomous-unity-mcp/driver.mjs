@@ -10,14 +10,48 @@
 // Usage:
 //   node driver.mjs health                         # ping the live editor
 //   node driver.mjs call <tool> '<jsonParams>'     # any tool, raw
+//   node driver.mjs call <tool> @params.json       # params from a file (quote-safe)
+//   node driver.mjs call <tool> -                  # params from stdin
 //   node driver.mjs tools [category]               # list_tools_with_metadata
 //   node driver.mjs gen <kind> "<prompt>"          # manage_generator generate (writes an asset)
 //   node driver.mjs tests [editmode|playmode]      # run_tests + poll (reload-durable)
 //
+// On PowerShell an inline '{"a":"b"}' argument gets mangled (nested quotes need
+// backtick escapes and `<` is a reserved operator), so prefer @file or stdin there.
+//
 // Env: BRIDGE=http://127.0.0.1:8080/mcp/tool  CLIENT=run-driver
+import { readFileSync } from "node:fs";
+
 const BRIDGE = process.env.BRIDGE || "http://127.0.0.1:8080/mcp/tool";
 const CLIENT = process.env.CLIENT || "run-driver";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+// Accepts inline JSON, @path, or "-" for stdin. Strips the BOM that PowerShell
+// redirects prepend, which JSON.parse otherwise rejects.
+function parseParams(raw) {
+  if (!raw) return {};
+  let text;
+  try {
+    if (raw === "-") text = readFileSync(0, "utf8");
+    else if (raw.startsWith("@")) text = readFileSync(raw.slice(1), "utf8");
+    else text = raw;
+  } catch (e) {
+    console.error(`could not read params: ${e.message}`);
+    process.exit(2);
+  }
+
+  text = text.replace(/^\uFEFF/, "").trim();
+  if (!text) return {};
+
+  try {
+    return JSON.parse(text);
+  } catch (e) {
+    console.error(`invalid JSON params: ${e.message}`);
+    console.error(`received: ${text.slice(0, 200)}`);
+    console.error("On PowerShell, pass @params.json or pipe JSON and use '-' instead of inline quotes.");
+    process.exit(2);
+  }
+}
 
 async function call(tool, params = {}, timeoutMs = 155000) {
   const t0 = Date.now();
@@ -46,7 +80,8 @@ async function main() {
       break;
     }
     case "call": {
-      const params = b ? JSON.parse(b) : {};
+      if (!a) { console.error("usage: call <tool> ['<json>' | @params.json | -]"); process.exit(2); }
+      const params = parseParams(b);
       const r = await call(a, params);
       console.log(`(${r.elapsed.toFixed(1)}s)`, JSON.stringify(r.json ?? r, null, 2));
       break;
@@ -91,7 +126,10 @@ async function main() {
       break;
     }
     default:
-      console.error("commands: health | call <tool> '<json>' | tools [category] | gen <kind> \"<prompt>\" | tests [editmode|playmode]");
+      console.error(
+        "commands: health | call <tool> ['<json>'|@file|-] | tools [category] | " +
+        'gen <kind> "<prompt>" | tests [editmode|playmode]'
+      );
       process.exit(2);
   }
 }

@@ -38,6 +38,10 @@ node .claude/skills/run-autonomous-unity-mcp/driver.mjs tools
 #   → lists registered tools with [mode/category]
 
 node .claude/skills/run-autonomous-unity-mcp/driver.mjs call manage_scene '{"action":"list_scenes"}'
+#   ⚠ PowerShell only: inline JSON gets mangled ('{"a":"b"}' arrives as {a:b}, and `<` is a
+#   reserved operator). Use a file or stdin instead:
+node .claude/skills/run-autonomous-unity-mcp/driver.mjs call manage_scene @params.json
+'{"action":"list_scenes"}' | node .claude/skills/run-autonomous-unity-mcp/driver.mjs call manage_scene -
 
 node .claude/skills/run-autonomous-unity-mcp/driver.mjs gen texture "a seamless mossy stone tile, top-down"
 #   → writes an asset under Assets/Generated/ and returns its assetPath (keyless Pollinations by default)
@@ -66,4 +70,6 @@ The raw protocol (what the driver does): `POST http://127.0.0.1:8080/mcp/tool` w
 
 ## Driver
 `.claude/skills/run-autonomous-unity-mcp/driver.mjs` — zero-dep Node bridge harness (`health` / `call` / `tools` / `gen` / `tests`). It's the agent's handle on the live editor; extend it with new subcommands as needed.
+
+`call` takes params as inline JSON, `@path/to/file.json`, or `-` for stdin. On PowerShell prefer the last two — inline quoting cannot be made to survive. A UTF-8 BOM (which PowerShell redirects add) is stripped before parsing.
 ```
