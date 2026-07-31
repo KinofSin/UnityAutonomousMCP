@@ -90,6 +90,12 @@ namespace AutonomousMcp.Editor.UI
                         CreateCheckpoint(label, "hud");
                 }
 
+                if (GUILayout.Button(new GUIContent("Cleanup", "Per-object cost and removal for the selected avatar"),
+                        EditorStyles.toolbarButton, GUILayout.Width(62)))
+                {
+                    AvatarCleanupWindow.Open();
+                }
+
                 if (GUILayout.Button(new GUIContent("Clear feed", "Dismiss all advice items"),
                         EditorStyles.toolbarButton, GUILayout.Width(70)))
                 {

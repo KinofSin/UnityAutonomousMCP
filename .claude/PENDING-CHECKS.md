@@ -204,6 +204,22 @@ failure whose name is under `AutonomousMcp.SelfTest`.
 - [ ] `com.autonomous-unity.mcp/Editor/AutonomousMcpToolDispatcher.cs` is ~5,350 lines.
       Split opportunistically only; it is high-churn, low-reward risk.
 
+## Avatar Cleanup window (2026-07-31)
+
+- [x] Renders against LEAF, auto-picks the root from Selection, highlights disabled rows, and the
+      header carries the finding ("5 disabled objects still cost 86,619 polys (31%) … removing all
+      leaves 192,260 (Over)"). Dossier JSON verified byte-identical after extracting `AvatarCost`,
+      including `truncated.cost`.
+- [ ] **Untested: the delete path itself.** It cannot be driven from here — `EditorUtility.
+      DisplayDialog` blocks the main thread waiting for a click, so automating the confirmation
+      would hang the bridge, and the only realistic targets are real wardrobe objects on the
+      user's avatar. Verified by compile and review only. First real use should be one cheap
+      disabled object (`FT_Debug`, 282 polys) with an immediate Ctrl+Z to confirm both the Undo
+      step and the checkpoint.
+- [ ] Unverified: whether `Undo.DestroyObjectImmediate` cleanly produces a *removed GameObject*
+      override on a prefab-instance child in 2022.3, or refuses. Each delete is wrapped in
+      try/catch and reported per object, so a refusal surfaces rather than half-completing.
+
 ## Unity supervisor (2026-07-31)
 
 - [x] `status` / `ensure` fast-path / `enable-autoconnect` guard all verified against the live

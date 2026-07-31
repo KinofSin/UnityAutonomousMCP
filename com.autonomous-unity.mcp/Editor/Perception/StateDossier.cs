@@ -484,127 +484,63 @@ namespace AutonomousMcp.Editor.Perception
             };
         }
 
-        private sealed class CostRow
-        {
-            public string Path, Name;
-            public int InstanceId;
-            public bool Active, ActiveSelf;
-            public int Renderers, SkinnedMeshes, MaterialSlots, Blendshapes;
-            public int Polygons, Verts;
-        }
-
         /// <summary>
         /// Per-object cost attribution: what each object costs and what removing it would buy.
+        /// A projection of <see cref="AvatarCost"/>, which the Avatar Cleanup window also reads,
+        /// so the UI and the agent can never disagree about the same avatar.
         ///
-        /// The renderers section already reports per-object polygons, but nothing about
-        /// consequence, so answering "what should I delete?" meant hand-writing a query every
-        /// time. The decisive number is <c>ifRemoved</c>: totals minus this object, plus the rank
-        /// that would leave behind.
-        ///
-        /// Inactive objects are deliberately included and called out. VRChat's performance stats
-        /// walk renderers with includeInactive, so a wardrobe toggle that is switched off still
-        /// costs rank and download size — which makes disabled objects the highest-value and
-        /// least-obvious removal candidates on a typical avatar.
+        /// The decisive field is <c>ifRemoved</c>: the renderers section already reports per-object
+        /// polygons but says nothing about consequence, so "what should I delete?" used to mean
+        /// hand-writing a query every time.
         /// </summary>
         private static object BuildCost(GameObject root, Scene scene, int max, Dictionary<string, bool> truncated)
         {
-            var groups = new Dictionary<int, CostRow>();
-            var order = new List<int>();
-            long totalPolys = 0, totalVerts = 0;
-            int totalSlots = 0, skinnedCount = 0, meshCount = 0;
+            var report = AvatarCost.Build(root, scene);
 
-            foreach (var r in EnumerateRenderers(root, scene))
+            var shown = report.Entries;
+            if (shown.Count > max) { truncated["cost"] = true; shown = shown.Take(max).ToList(); }
+
+            var candidates = shown.Select(e => (object)new
             {
-                var mesh = MeshOf(r);
-                var polys = TriangleCount(mesh);
-                var verts = mesh != null ? mesh.vertexCount : 0;
-                var slots = r.sharedMaterials != null ? r.sharedMaterials.Length : 0;
-                var isSkinned = r is SkinnedMeshRenderer;
-
-                totalPolys += polys;
-                totalVerts += verts;
-                totalSlots += slots;
-                if (isSkinned) skinnedCount++; else meshCount++;
-
-                var go = r.gameObject;
-                var id = go.GetInstanceID();
-                if (!groups.TryGetValue(id, out var row))
-                {
-                    groups[id] = row = new CostRow
-                    {
-                        Path = HierarchyPath(go.transform),
-                        Name = go.name,
-                        InstanceId = id,
-                        Active = go.activeInHierarchy,
-                        ActiveSelf = go.activeSelf
-                    };
-                    order.Add(id);
-                }
-                row.Renderers++;
-                if (isSkinned) row.SkinnedMeshes++;
-                row.Polygons += polys;
-                row.Verts += verts;
-                row.MaterialSlots += slots;
-                row.Blendshapes += mesh != null ? mesh.blendShapeCount : 0;
-            }
-
-            var rows = order.Select(id => groups[id]).ToList();
-            rows.Sort((a, b) => b.Polygons.CompareTo(a.Polygons));
-
-            long inactivePolys = 0;
-            int inactiveSlots = 0, inactiveObjects = 0;
-            foreach (var row in rows)
-            {
-                if (row.Active) continue;
-                inactiveObjects++;
-                inactivePolys += row.Polygons;
-                inactiveSlots += row.MaterialSlots;
-            }
-
-            var capped = rows;
-            if (rows.Count > max) { truncated["cost"] = true; capped = rows.Take(max).ToList(); }
-
-            var candidates = capped.Select(row => (object)new
-            {
-                path = row.Path,
-                name = row.Name,
-                instanceId = row.InstanceId,
-                active = row.Active,
-                activeSelf = row.ActiveSelf,
-                renderers = row.Renderers,
-                skinnedMeshes = row.SkinnedMeshes,
-                polygons = row.Polygons,
-                verts = row.Verts,
-                materialSlots = row.MaterialSlots,
-                blendshapes = row.Blendshapes,
-                shareOfPolygons = totalPolys > 0 ? Math.Round(row.Polygons / (double)totalPolys, 4) : 0d,
-                ifRemoved = Project(totalPolys - row.Polygons, totalSlots - row.MaterialSlots)
+                path = e.Path,
+                name = e.Name,
+                instanceId = e.InstanceId,
+                active = e.Active,
+                activeSelf = e.ActiveSelf,
+                renderers = e.Renderers,
+                skinnedMeshes = e.SkinnedMeshes,
+                polygons = e.Polygons,
+                verts = e.Verts,
+                materialSlots = e.MaterialSlots,
+                blendshapes = e.Blendshapes,
+                shareOfPolygons = Math.Round(report.ShareOfPolygons(e.Polygons), 4),
+                ifRemoved = Project(report.Without(e.Polygons, e.MaterialSlots))
             }).ToList();
 
             return new
             {
                 totals = new
                 {
-                    polygons = totalPolys,
-                    verts = totalVerts,
-                    materialSlots = totalSlots,
-                    skinnedMeshes = skinnedCount,
-                    meshRenderers = meshCount,
-                    objects = rows.Count
+                    polygons = report.TotalPolygons,
+                    verts = report.TotalVerts,
+                    materialSlots = report.TotalMaterialSlots,
+                    skinnedMeshes = report.SkinnedMeshes,
+                    meshRenderers = report.MeshRenderers,
+                    objects = report.Entries.Count
                 },
                 rank = new
                 {
-                    polygons = PolygonTier.Rank(totalPolys),
-                    materialSlots = MaterialSlotTier.Rank(totalSlots),
-                    skinnedMeshes = SkinnedMeshTier.Rank(skinnedCount)
+                    polygons = report.PolygonRank,
+                    materialSlots = report.MaterialSlotRank,
+                    skinnedMeshes = report.SkinnedMeshRank
                 },
                 inactive = new
                 {
-                    objects = inactiveObjects,
-                    polygons = inactivePolys,
-                    materialSlots = inactiveSlots,
-                    shareOfPolygons = totalPolys > 0 ? Math.Round(inactivePolys / (double)totalPolys, 4) : 0d,
-                    ifAllRemoved = Project(totalPolys - inactivePolys, totalSlots - inactiveSlots)
+                    objects = report.InactiveObjects,
+                    polygons = report.InactivePolygons,
+                    materialSlots = report.InactiveMaterialSlots,
+                    shareOfPolygons = Math.Round(report.ShareOfPolygons(report.InactivePolygons), 4),
+                    ifAllRemoved = Project(report.Without(report.InactivePolygons, report.InactiveMaterialSlots))
                 },
                 candidates,
                 pc = PcBudgets,
@@ -616,35 +552,13 @@ namespace AutonomousMcp.Editor.Perception
             };
         }
 
-        private static object Project(long polygons, int materialSlots) => new
+        private static object Project(CostProjection p) => new
         {
-            polygons,
-            polygonRank = PolygonTier.Rank(polygons),
-            materialSlots,
-            materialSlotRank = MaterialSlotTier.Rank(materialSlots)
+            polygons = p.Polygons,
+            polygonRank = p.PolygonRank,
+            materialSlots = p.MaterialSlots,
+            materialSlotRank = p.MaterialSlotRank
         };
-
-        private static Mesh MeshOf(Renderer r)
-        {
-            if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
-            var mf = r.GetComponent<MeshFilter>();
-            return mf != null ? mf.sharedMesh : null;
-        }
-
-        // GetIndexCount rather than mesh.triangles.Length: the latter allocates and marshals the
-        // whole index array per renderer — ~150k ints for one head — purely to divide by three.
-        // Non-triangle submeshes are skipped instead of being miscounted as triangles.
-        private static int TriangleCount(Mesh mesh)
-        {
-            if (mesh == null) return 0;
-            long indices = 0;
-            for (int i = 0; i < mesh.subMeshCount; i++)
-            {
-                if (mesh.GetTopology(i) != MeshTopology.Triangles) continue;
-                indices += mesh.GetIndexCount(i);
-            }
-            return (int)(indices / 3);
-        }
 
         private static object BuildWorld(Scene scene)
         {
@@ -761,7 +675,7 @@ namespace AutonomousMcp.Editor.Perception
             }
         }
 
-        private static IEnumerable<Renderer> EnumerateRenderers(GameObject root, Scene scene)
+        internal static IEnumerable<Renderer> EnumerateRenderers(GameObject root, Scene scene)
         {
             if (root != null)
             {
@@ -910,7 +824,7 @@ namespace AutonomousMcp.Editor.Perception
             }
         }
 
-        private static string HierarchyPath(Transform t)
+        internal static string HierarchyPath(Transform t)
         {
             var sb = new StringBuilder(t.name);
             var cur = t.parent;
