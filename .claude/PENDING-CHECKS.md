@@ -53,9 +53,34 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       filtered run read as a stalled `7/260`. Unity hands `RunStarted` the entire tree regardless
       of the filter, so `AutonomousMcpTestRunner` now counts the leaves the filter selects.
       Verified: `CheckpointStoreTests` reports `7/7`.
-- [ ] `execute_csharp` passes the snippet to `mono.exe` as an argv, so anything multi-line
-      fails with "The filename or extension is too long". Write to a temp file and compile
-      that instead.
+- [x] `execute_csharp` failed with "The filename or extension is too long". **The earlier
+      diagnosis here was wrong** — it was not the snippet being multi-line. `CSharpCodeProvider`
+      puts every reference on the compiler command line as `/r:`, and Leaf loads several hundred
+      assemblies, which blew the ~32 KB Windows limit; even `return 2+2;` failed. References now
+      go in an mcs response file. Verified: a 62-line snippet and an 8-line one doing real editor
+      work both run, and bad code returns a genuine C# diagnostic.
+- [ ] `execute_csharp` remaining sharp edge: a snippet that **names** a duplicated BCL type
+      (`List<T>`, `Dictionary<,>`, `StringBuilder`) still fails with "defined multiple times",
+      because mscorlib and the netstandard/System.Runtime facades all get referenced and mcs
+      counts a forwarded type as a second definition. Dropping the facades is not the fix — it
+      was tried, and Unity's own assemblies are built against netstandard, so every snippet
+      touching a Unity type then fails with "System.Object is defined in an assembly that is not
+      referenced". Arrays, strings, primitives and the Unity/UnityEditor APIs all work, which
+      covers most editor scripting. A real fix likely means a curated reference set rather than
+      "every loaded assembly".
+
+## World loop (first run, 2026-07-31)
+
+- [x] Ran the world audit loop for the first time. It worked, and exposed the same class of bug
+      as the avatar loop: its only texture signal was `unity_optimization oversized_textures`,
+      which judged by the **larger** dimension, so a 2048×2048 albedo costing 11 MB passed a
+      "> 2048" check while two Poiyomi TPS baked *mesh-data* strips (8190×2, ~64 KB, and
+      corrupted if shrunk) were the only things reported. It also scans the whole project via
+      `FindAssets`, so it cannot respond to scene edits at all. Now: degenerate short-edge
+      textures are excluded and surfaced separately as `skippedDataTextures`, hits are ranked by
+      real memory, and the world loop gets scene-scoped `Texture VRAM (MB)` / `Textures > 1024`
+      from the dossier. On the open scene that moved the signal from "2 oversized" (128 KB of
+      untouchable data) to the actual 301 MB across 51 textures.
 
 ## Third-party test noise (not ours — do not chase)
 

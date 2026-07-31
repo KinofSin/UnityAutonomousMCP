@@ -63,7 +63,13 @@ const WORLD_METRICS = [
   { key: "renderers", label: "Renderers", pick: (d) => d?.summary?.renderers },
   { key: "gameObjects", label: "GameObjects", pick: (d) => d?.summary?.gameObjects },
   { key: "drawCalls", label: "Draw call estimate", pick: (d) => d?.drawCalls?.estimate },
-  { key: "oversizedTextures", label: "Oversized textures", pick: (d) => d?.oversized?.count },
+  // Project-wide, so it does not respond to scene edits — kept for continuity only.
+  { key: "oversizedTextures", label: "Oversized (project-wide)", pick: (d) => d?.oversized?.count },
+  // The scene-scoped texture signal, same as avatars. unity_optimization reports
+  // nothing usable here: scene_summary has no texture data at all, and
+  // oversized_textures scans the whole project by dimension.
+  { key: "textureVramMB", label: "Texture VRAM (MB)", pick: (d) => d?.textureStats?.vramMB },
+  { key: "texturesOver1024", label: "Textures > 1024", pick: (d) => d?.textureStats?.over1024 },
 ];
 
 function sum(...vals) {
@@ -180,14 +186,15 @@ async function scanAvatar(name) {
   return { raw: data, metrics: extract(AVATAR_METRICS, data), budgets: budgets(AVATAR_METRICS, data) };
 }
 
-// Texture memory comes from the dossier, not scan_avatar. Only the summary is kept:
-// the per-texture list is large and belongs in the dossier artifact, not in state.
+// Texture memory comes from the dossier, not scan_avatar / unity_optimization.
+// Only the summary is kept: the per-texture list is large and belongs in the
+// dossier artifact, not in loop state. Pass null for the whole active scene.
 async function scanTextures(instanceId) {
-  const d = await call(
-    "unity_perception",
-    { action: "dossier", instanceId, sections: ["textures"] },
-    60000
-  );
+  const params =
+    instanceId == null
+      ? { action: "dossier", mode: "scene", sections: ["textures"] }
+      : { action: "dossier", instanceId, sections: ["textures"] };
+  const d = await call("unity_perception", params, 60000);
   const list = d?.sections?.textures?.textures ?? [];
   if (!list.length) return undefined;
 
@@ -210,7 +217,8 @@ async function scanWorld() {
   const summary = await call("unity_optimization", { action: "scene_summary" });
   const drawCalls = await call("unity_optimization", { action: "draw_call_estimate" });
   const oversized = await call("unity_optimization", { action: "oversized_textures" });
-  const data = { summary, drawCalls, oversized };
+  const textureStats = await scanTextures(null);
+  const data = { summary, drawCalls, oversized, textureStats };
   return { raw: data, metrics: extract(WORLD_METRICS, data), budgets: budgets(WORLD_METRICS, data), sceneName: summary?.scene };
 }
 

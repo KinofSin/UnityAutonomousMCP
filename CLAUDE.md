@@ -90,6 +90,18 @@ Engine stance remains **Unity 2022.3.22f1 + VRChat SDK3**. Always-loaded referen
 **Optimization loop** — the audit skills measure over the bridge, they do not parse prefab YAML:
 
 - **Step 0 — scene/avatar dossier** (before guessing inspector/material state): `node .claude/tools/scene-dossier.mjs avatar <goName>` or `… scene`. Pulls sectioned `unity_perception {action:"dossier"}` calls, writes `.claude/.vrc-state/dossier-<slug>.md` + `.json`, prints a ~40-line summary. Grep the artifact for a mesh/material; do not dump full Poiyomi property lists into chat (~87k tokens for a 28-mat avatar). `verify <slug>` rechecks `stateHash` (exit `1` = stale). Locked Poiyomi (`Hidden/Locked/…`) is flagged — per-property values are not meaningfully readable until unlocked.
+- **`execute_csharp` references go in an mcs response file**, not on the command line — Leaf loads
+  several hundred assemblies and `/r:` per reference blew the ~32 KB Windows limit, so every
+  snippet failed with "The filename or extension is too long" regardless of length. Remaining
+  sharp edge: naming a duplicated BCL type (`List<T>`, `Dictionary<,>`, `StringBuilder`) fails
+  with "defined multiple times", because mscorlib and the netstandard facades all get referenced.
+  Dropping the facades is *not* the fix (Unity's assemblies target netstandard). Use arrays,
+  strings and the Unity/UnityEditor APIs; those all work.
+- **`unity_optimization oversized_textures` is project-wide and dimension-based** — it judges by
+  the larger dimension, so it is not a scene metric and never moves when you optimize a scene.
+  Degenerate data textures (Poiyomi TPS baked mesh strips, 8190×2) are excluded via
+  `min_dimension` and reported separately as `skippedDataTextures`; **never shrink those**, they
+  encode mesh data. For a real scene/avatar texture figure use the dossier.
 - **All harnesses share `.claude/tools/bridge.mjs`** — one request path with reconnect. Any AssetDatabase write can trigger a domain reload that tears down the HTTP listener for a few seconds, and a one-shot `fetch` turns that routine blip into a dead run. Retries are classified by whether the editor can possibly have executed the tool: `refused` (nothing listening — never delivered) and `busy` (our HTTP 503 `{busy,retryable}`, dispatcher explicitly did not run it) are always safe; `timeout`/`network` are ambiguous and only retried when the caller passes `idempotent:true` (see `READ_ONLY_TOOLS`). Never make a mutating call idempotent — it could apply twice.
 - `.claude/tools/vrc-loop.mjs` — records a baseline via `scan_avatar` / `unity_optimization` into `.claude/.vrc-state/` (gitignored) and prints a delta table each pass. **Avatar passes also pull `unity_perception dossier` textures**, because `scan_avatar` reports no texture data at all: without it the loop could not see its own primary Tier-1 lever, so a working `manage_texture` pass measured as an all-zero delta and the "stop after two unchanged passes" rule ended the run. Tracked as `Texture VRAM (MB)` and `Textures > 1024`. Exit codes drive the loop: `0` improved/unchanged, `1` regressed, `2` bridge unreachable. Avatar resolve uses `search_hierarchy {include_inactive:true}` → `instanceId` because VRChat twins are normally inactive and `GameObject.Find` skips them.
 - One change per pass, 5 passes max. Tier 1 (AAO TraceAndOptimize if installed/off, then `manage_texture` `set_import_settings`, importer settings) is autonomous; Tier 2 (component removal) needs a `manage_checkpoint`; Tier 3 (geometry, bones, material merges, lightmap rebake) always asks.

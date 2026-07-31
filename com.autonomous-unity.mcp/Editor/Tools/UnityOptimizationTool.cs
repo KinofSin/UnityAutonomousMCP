@@ -114,29 +114,66 @@ namespace AutonomousMcp.Editor.Tools
         private static AutonomousMcpToolResponse OversizedTextures(JObject args)
         {
             var maxAllowed = args.Value<int?>("max_size") ?? 2048;
+            // Data textures (LUTs, Poiyomi TPS baked mesh strips) are extremely long and
+            // 1-8 px on the short edge. Judging by the LARGER dimension alone inverted this
+            // check in practice: an 8190x2 TPS strip costing 64 KB was reported while a
+            // 2048x2048 albedo costing 11 MB was not — and shrinking that strip corrupts the
+            // mesh data it encodes. Require a real short edge, and rank by actual memory.
+            var minDimension = args.Value<int?>("min_dimension") ?? 64;
             var folder = args.Value<string>("folder") ?? "Assets";
             var guids = AssetDatabase.FindAssets("t:Texture2D", new[] { folder });
-            var hits = new List<object>();
+
+            var hits = new List<(long bytes, object entry)>();
+            long totalBytes = 0;
+            var skippedDataTextures = new List<object>();
+
             foreach (var g in guids)
             {
                 var path = AssetDatabase.GUIDToAssetPath(g);
                 var tex = AssetDatabase.LoadAssetAtPath<Texture2D>(path);
                 var importer = AssetImporter.GetAtPath(path) as TextureImporter;
                 if (tex == null || importer == null) continue;
+
                 int big = System.Math.Max(tex.width, tex.height);
-                if (big > maxAllowed)
+                if (big <= maxAllowed) continue;
+
+                int shortEdge = System.Math.Min(tex.width, tex.height);
+                if (shortEdge < minDimension)
                 {
-                    hits.Add(new
-                    {
-                        path,
-                        width = tex.width,
-                        height = tex.height,
-                        currentMaxSize = importer.maxTextureSize,
-                        crunched = importer.crunchedCompression
-                    });
+                    // Surfaced, not hidden — but never presented as something to shrink.
+                    skippedDataTextures.Add(new { path, width = tex.width, height = tex.height });
+                    continue;
                 }
+
+                var bytes = UnityEngine.Profiling.Profiler.GetRuntimeMemorySizeLong(tex);
+                totalBytes += bytes;
+                hits.Add((bytes, new
+                {
+                    path,
+                    width = tex.width,
+                    height = tex.height,
+                    currentMaxSize = importer.maxTextureSize,
+                    crunched = importer.crunchedCompression,
+                    bytes
+                }));
             }
-            return Ok(new { action = "oversized_textures", maxAllowed, count = hits.Count, textures = hits });
+
+            var ordered = hits.OrderByDescending(h => h.bytes).Select(h => h.entry).ToList();
+            return Ok(new
+            {
+                action = "oversized_textures",
+                maxAllowed,
+                minDimension,
+                count = ordered.Count,
+                totalBytes,
+                totalMB = System.Math.Round(totalBytes / 1048576.0, 1),
+                textures = ordered,
+                skippedDataTextureCount = skippedDataTextures.Count,
+                skippedDataTextures,
+                note = "Project-wide scan over 'folder', NOT scene-scoped — it will not move when you " +
+                       "optimize the open scene. For a scene/avatar figure use unity_perception " +
+                       "{action:'dossier', sections:['textures']}, which reports only what is actually loaded."
+            });
         }
 
         private static AutonomousMcpToolResponse DrawCallEstimate(JObject args)

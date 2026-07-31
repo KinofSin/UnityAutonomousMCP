@@ -2520,6 +2520,7 @@ namespace AutonomousMcp.Editor
                 return Error("execute_csharp requires non-empty 'code'.");
 
             var returnResult = args.Value<bool?>("return_result") ?? true;
+            string responseFile = null;
 
             try
             {
@@ -2548,15 +2549,56 @@ public static class __McpEval
                     TreatWarningsAsErrors = false
                 };
 
-                // Add references to all loaded assemblies
+                // Reference every loaded assembly so a snippet can touch anything the editor
+                // can. Collecting them is the easy part — handing them to the compiler is not.
+                //
+                // Keep one assembly per simple name: Unity can have the same assembly loaded
+                // from two locations (editor vs player profile), and referencing both makes
+                // every type in them ambiguous.
+                var byName = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
                 foreach (var asm in AppDomain.CurrentDomain.GetAssemblies())
                 {
                     try
                     {
-                        if (!asm.IsDynamic && !string.IsNullOrEmpty(asm.Location))
-                            parameters.ReferencedAssemblies.Add(asm.Location);
+                        if (asm.IsDynamic || string.IsNullOrEmpty(asm.Location)) continue;
+                        if (!File.Exists(asm.Location)) continue;
+                        var simpleName = asm.GetName().Name;
+                        if (!byName.ContainsKey(simpleName)) byName[simpleName] = asm.Location;
                     }
                     catch { /* skip problematic assemblies */ }
+                }
+
+                // KNOWN LIMITATION: mscorlib and the netstandard/System.Runtime facades are all
+                // loaded, and mcs counts a facade's forwarded type as a second definition. So a
+                // snippet that *names* a duplicated BCL type (List<T>, Dictionary<,>,
+                // StringBuilder) fails with "defined multiple times", even fully qualified.
+                // Dropping the facades is not a fix — Unity's own assemblies are built against
+                // netstandard, so without it every snippet touching a Unity type fails with
+                // "System.Object is defined in an assembly that is not referenced" instead.
+                // Arrays, strings, primitives and the Unity/UnityEditor APIs are unaffected,
+                // which covers most editor scripting; prefer those over generic collections.
+                var refPaths = new HashSet<string>(byName.Values, StringComparer.OrdinalIgnoreCase);
+
+                // CSharpCodeProvider puts every reference on the compiler's command line as
+                // /r:<path>. A Unity project with an SDK and a few asset packages loads several
+                // hundred assemblies with long paths, which blows the ~32 KB Windows command
+                // line — so EVERY snippet failed with "The filename or extension is too long",
+                // however short it was. Pass the references in an mcs response file instead and
+                // keep the command line small.
+                try
+                {
+                    responseFile = Path.Combine(Path.GetTempPath(), $"mcp_eval_{Guid.NewGuid():N}.rsp");
+                    var rsp = new System.Text.StringBuilder();
+                    foreach (var p in refPaths) rsp.Append("-r:\"").Append(p).Append("\"\n");
+                    File.WriteAllText(responseFile, rsp.ToString());
+                    parameters.CompilerOptions = $"@\"{responseFile}\"";
+                }
+                catch
+                {
+                    // Response file unavailable: fall back to the inline form. It may still hit
+                    // the length limit, but failing to compile at all is strictly worse.
+                    responseFile = null;
+                    foreach (var p in refPaths) parameters.ReferencedAssemblies.Add(p);
                 }
 
                 var results = provider.CompileAssemblyFromSource(parameters, fullCode);
@@ -2611,6 +2653,13 @@ public static class __McpEval
             catch (Exception ex)
             {
                 return Error($"execute_csharp failed: {ex.GetType().Name}: {ex.Message}");
+            }
+            finally
+            {
+                if (responseFile != null)
+                {
+                    try { File.Delete(responseFile); } catch { /* temp file, best effort */ }
+                }
             }
         }
 
