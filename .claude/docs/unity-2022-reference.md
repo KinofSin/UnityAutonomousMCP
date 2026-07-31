@@ -51,11 +51,11 @@ Animate Transform Euler rotation with **`localEulerAnglesRaw.<axis>`**, not `loc
 - After writing bytes to `Assets/`, call `AssetDatabase.ImportAsset` / `Refresh` before `LoadAssetAtPath`.
 - Importers (TextureImporter, ModelImporter, glTF packages) may need a second import or settings apply before the typed asset is loadable.
 - **Domain reload** wipes static/in-memory state. Persist cross-reload job state with `SessionState` (e.g. `run_tests` / `get_test_job`). Do not keep long-lived static caches of generation jobs without persistence.
-- Unity **defers compilation while unfocused**. Bridge-only `refresh_unity` does not compile until the user focuses the editor. Verify compiles with `read_console {level:"error"}`, not `get_compilation_errors` (stale last-good assembly → false clean).
+- **Compilation does not need editor focus** (measured 2026-07-31: another app held the foreground start-to-finish; `refresh_unity` after adding a package `.cs` recompiled in 23s). Bridge-only loops can recompile unattended. Verify with `read_console {level:"error"}`, not `get_compilation_errors` (stale last-good assembly → false clean). Note this is separate from **manifest** changes, which still re-resolve only on editor focus.
 
 ## Leaf junction mount (dev loop)
 
-Leaf embeds the package via a Windows **junction** `Leaf\Packages\com.autonomous.unity.mcp` → repo `com.autonomous-unity.mcp`. Edit in repo → focus Unity → Auto Refresh recompiles from live source. The old `file:` external mount cached copies and ignored edits until PM re-resolve / restart.
+Leaf embeds the package via a Windows **junction** `Leaf\Packages\com.autonomous.unity.mcp` → repo `com.autonomous-unity.mcp`. Edit in repo → `refresh_unity` (or focus/`Ctrl+R`) → recompiles from live source, background included. The old `file:` external mount cached copies and ignored edits until PM re-resolve / restart — that mount, not focus, was the real cause of the old "edits don't take" symptom.
 
 ## Generators / BYOK (editor main thread)
 

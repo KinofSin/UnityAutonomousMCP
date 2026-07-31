@@ -58,7 +58,7 @@ async function main() {
   if (!noRefresh) {
     const refresh = await call("refresh_unity", {});
     if (refresh?.editor?.isCompiling || refresh?.isCompiling) {
-      console.log("note: editor is compiling — Unity defers compile while unfocused. Focus Unity, then re-run.");
+      console.log("note: editor is compiling (focus is not required) — re-run once isCompiling clears.");
     }
   }
 
@@ -81,7 +81,7 @@ async function main() {
 
   if (count > 0) {
     console.log("");
-    console.log("Fix one root cause, focus Unity so it recompiles, then re-run unity-verify.mjs.");
+    console.log("Fix one root cause, then re-run unity-verify.mjs (it triggers the recompile itself).");
     process.exit(EXIT_ERRORS);
   }
   console.log("clean");

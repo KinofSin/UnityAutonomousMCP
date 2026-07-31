@@ -6,30 +6,53 @@ unchecked items at session start, so delete or tick a line once it is genuinely 
 
 Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
 
-## Needs Unity open
+## Verified 2026-07-31 (Unity 2022.3.22f1 on Leaf)
 
-- [ ] Compile the package after the checkpoint change (commit `9293de6`). Written with
-      Unity closed, so it has never been through a compiler. Watch for the fully-qualified
-      `AutonomousMcp.Editor.Core.CheckpointStore` calls added to `AutonomousMcpToolDispatcher.cs`.
-- [ ] Run `CheckpointStoreTests` (7 cases). The material round-trip is the flake risk:
-      it replaces `.mat` bytes on disk and reloads, and Unity sometimes serves a cached
-      instance despite `ImportAsset(ForceUpdate)`.
-- [ ] Run the full EditMode suite for a health baseline. It has never been run end to end;
-      the last attempt died when the bridge went down mid-run.
-- [ ] Live-test a real restore: `manage_texture set_import_settings` to shrink a texture,
-      then `manage_checkpoint restore {include_scene:false}`, and confirm the importer
-      max size actually comes back.
+- [x] Package compiles after the checkpoint change — clean, zero `error CS`, zero console errors.
+- [x] `CheckpointStoreTests` — 7/7 pass, including the material round-trip flake risk.
+- [x] Full EditMode suite — 260 tests: 235 pass, 18 fail, 7 skip. **No failure is ours.** 16 are
+      the vendored YUCP package (several reference `C:\Users\svalp\...`, another dev's machine);
+      2 were caused by our own bridge — see the open item below.
+- [x] `AutonomousMcp.SelfTest` alone — 96 pass, 4 fail, 2 skip; all 4 failures are the keyless
+      Pollinations tier returning HTTP 429 "Queue full for IP", not logic.
+- [x] Live restore end-to-end: `set_import_settings` 2048→256 auto-captured the asset (+`.meta`),
+      `restore {include_scene:false}` returned it to 2048 without reopening the scene.
+- [x] **Unity compiles while unfocused.** Spotify held the foreground before *and* after
+      (`GetForegroundWindow` checked both ends); `refresh_unity` recompiled in 23s,
+      `buildStamp c169b785 → ba1225bd`. The old "focus required" claim was stale and is now
+      corrected in `CLAUDE.md`, `unity-2022-reference.md`, `unity-compile-fix`, the
+      `unity-2022-specialist` agent, and `unity-verify.mjs`.
+
+## Still needs Unity open
+
 - [ ] Untested branch: `CaptureAssets` auto-creating a checkpoint when **zero** exist.
       Forcing it in a test would need `DeleteAll()`, which would wipe real checkpoints.
 
-## Open question — the biggest autonomy unknown
+## Bugs found while verifying
 
-- [ ] Does Unity compile while unfocused? `CLAUDE.md` says focus is required, but on
-      2026-07-30 `compiledAtUtc` advanced 02:37 -> 03:10 after a `refresh_unity` with no
-      deliberate focus. Controlled test: record `buildStamp` + `compiledAtUtc`, make a
-      comment-only edit in a package file, call `refresh_unity`, poll without touching the
-      window. If it compiles, delete the stale claim — the code-edit loop is already
-      autonomous. If not, an opt-in focus nudge is the unblock.
+- [x] **Polling the bridge during a test run failed unrelated tests.** A `get_test_job` poll hit
+      the 10s main-thread budget while tests owned the main thread, the bridge logged
+      `[Error] HTTP loop error: …`, and NUnit fails any test that emits an unexpected error log —
+      so monitoring a run corrupted it. Fixed in `AutonomousMcpTransportHost`: a `TimeoutException`
+      now answers **HTTP 503 `{busy:true,retryable:true}`** (previously the connection just dropped)
+      and logs at Warning, not Error. Re-run confirms it: 18 → 17 failures, zero console errors
+      across a full 260-test run.
+- [x] `get_test_job` reported `totalTests` for the whole suite even under `testFilter`, so a
+      filtered run read as a stalled `7/260`. Unity hands `RunStarted` the entire tree regardless
+      of the filter, so `AutonomousMcpTestRunner` now counts the leaves the filter selects.
+      Verified: `CheckpointStoreTests` reports `7/7`.
+- [ ] `execute_csharp` passes the snippet to `mono.exe` as an argv, so anything multi-line
+      fails with "The filename or extension is too long". Write to a temp file and compile
+      that instead.
+
+## Third-party test noise (not ours — do not chase)
+
+The full EditMode suite is **260 tests: 236 pass, 17 fail, 7 skip**. Every one of the 17 belongs
+to the vendored **YUCP / Novaspil** package (`ParseTrustedRootKeys`, `DirectVpmInstaller`,
+`GuardianTransaction`, `PackageSigningTab`, `ProtectedImportFastPath`, `TryFinalizeProtectedInstall`,
+…). Several cannot pass on this machine at all — they reference `C:\Users\svalp\Downloads\…`, a
+different developer's paths. Treat **17 failures as the green baseline**; only investigate a
+failure whose name is under `AutonomousMcp.SelfTest`.
 
 ## CI
 

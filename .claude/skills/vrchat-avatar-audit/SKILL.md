@@ -111,6 +111,6 @@ Rank can be "improved" by destroying the avatar, so Tier 3 stays gated on explic
 ## Rules
 
 - One change per pass. The delta is only meaningful if it has a single cause.
-- Never edit C# in this loop. Script changes need Unity focused to compile; asset and component edits do not, which is what makes this loop safe to run unattended.
+- Never edit C# in this loop. Not because of compilation (the editor recompiles unfocused just fine) but because a script change triggers a domain reload mid-measurement, which invalidates the pass. Send compile work to `unity-compile-fix`.
 - Do not invent exact rank thresholds. Report measured numbers and direct the user to the SDK control panel for the official rank.
 - Hand off deeper strategy to the `vrchat-avatar-optimizer` agent; route world work to `vrchat-world-audit`.

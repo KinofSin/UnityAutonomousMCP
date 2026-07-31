@@ -1,4 +1,5 @@
 using System;
+using System.Text.RegularExpressions;
 using UnityEditor;
 using UnityEditor.TestTools.TestRunner.Api;
 using UnityEngine;
@@ -16,7 +17,7 @@ namespace AutonomousMcp.Editor
                 : "editmode";
 
             var job = AutonomousMcpTestJobs.Create(normalized);
-            var callback = new AutonomousMcpTestCallbacks(job);
+            var callback = new AutonomousMcpTestCallbacks(job, testFilter, category);
             Api.RegisterCallbacks(callback);
 
             var filter = new Filter
@@ -44,16 +45,76 @@ namespace AutonomousMcp.Editor
         private sealed class AutonomousMcpTestCallbacks : ICallbacks
         {
             private readonly AutonomousMcpTestJobState _job;
+            private readonly Regex _groupRegex;
+            private readonly string _category;
 
-            public AutonomousMcpTestCallbacks(AutonomousMcpTestJobState job)
+            public AutonomousMcpTestCallbacks(AutonomousMcpTestJobState job, string testFilter = null, string category = null)
             {
                 _job = job;
+                _category = category;
+                if (!string.IsNullOrWhiteSpace(testFilter))
+                {
+                    // Same semantics as Filter.groupNames: a regex over the full test name.
+                    try { _groupRegex = new Regex(testFilter); }
+                    catch (ArgumentException) { _groupRegex = null; }
+                }
             }
 
             public void RunStarted(ITestAdaptor testsToRun)
             {
-                var total = ReadIntProperty(testsToRun, "TestCaseCount");
+                // Unity hands RunStarted the whole tree even when ExecutionSettings carries a
+                // filter, so TestCaseCount is the entire suite and a filtered run reads as a
+                // stalled "7/260". Count the leaves the filter actually selects instead.
+                var total = CountSelected(testsToRun);
                 _job.MarkStarted(total);
+            }
+
+            private int CountSelected(ITestAdaptor root)
+            {
+                var fallback = ReadIntProperty(root, "TestCaseCount");
+                if (_groupRegex == null && string.IsNullOrWhiteSpace(_category)) return fallback;
+
+                try
+                {
+                    var counted = CountMatching(root);
+                    return counted > 0 ? counted : fallback;
+                }
+                catch
+                {
+                    // Adaptor shape differs across Test Framework versions; a wrong total is
+                    // cosmetic, so never let counting break the run.
+                    return fallback;
+                }
+            }
+
+            private int CountMatching(ITestAdaptor node)
+            {
+                if (node == null) return 0;
+
+                if (node.HasChildren)
+                {
+                    var sum = 0;
+                    foreach (var child in node.Children) sum += CountMatching(child);
+                    return sum;
+                }
+
+                if (_groupRegex != null && !_groupRegex.IsMatch(node.FullName ?? string.Empty)) return 0;
+
+                if (!string.IsNullOrWhiteSpace(_category))
+                {
+                    var hit = false;
+                    var categories = node.Categories;
+                    if (categories != null)
+                    {
+                        foreach (var c in categories)
+                        {
+                            if (string.Equals(c, _category, StringComparison.OrdinalIgnoreCase)) { hit = true; break; }
+                        }
+                    }
+                    if (!hit) return 0;
+                }
+
+                return 1;
             }
 
             public void RunFinished(ITestResultAdaptor result)

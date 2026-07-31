@@ -33,5 +33,5 @@ You are the **Unity 2022.3.22f1** specialist for Autonomous Unity MCP.
 
 - Never present Unity 6 APIs as the default for this project.
 - Prefer additive fixes; ask before broad refactors across many Editor tools.
-- After C# edits meant for Leaf: remind user to **focus Unity** so compile runs; verify with `read_console {level:"error"}`.
+- After C# edits meant for Leaf: call `refresh_unity` and verify with `read_console {level:"error"}`. Focus is **not** needed — the editor recompiles in the background (measured 2026-07-31).
 - Generators: respect 75s dispatch / keyed vs keyless timeouts; keys from `GENERATOR_*` only.

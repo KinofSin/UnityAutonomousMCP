@@ -147,6 +147,13 @@ namespace AutonomousMcp.Editor
                 {
                     break;
                 }
+                catch (TimeoutException ex)
+                {
+                    // Must not be LogError. Unity's test framework fails any test that emits an
+                    // unexpected error log, so an agent polling get_test_job during a run would
+                    // fail unrelated tests purely by observing them.
+                    Debug.LogWarning($"[AutonomousMCP] HTTP main thread busy: {ex.Message}");
+                }
                 catch (Exception ex)
                 {
                     Debug.LogError($"[AutonomousMCP] HTTP loop error: {ex.Message}");
@@ -197,7 +204,27 @@ namespace AutonomousMcp.Editor
                 envelope.clientName = context.Request.Headers["X-MCP-Client"] ?? "http-client";
             }
 
-            var toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
+            AutonomousMcpToolResponse toolResponse;
+            try
+            {
+                toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
+            }
+            catch (TimeoutException ex)
+            {
+                // The main thread is busy (test run, long import, domain reload). That is an
+                // expected transient, not a fault, so answer 503 instead of letting the
+                // exception escape and drop the connection — a harness can then back off and
+                // retry rather than concluding the bridge died.
+                WriteHttpResponse(context.Response, 503, JsonConvert.SerializeObject(new
+                {
+                    success = false,
+                    error = ex.Message,
+                    busy = true,
+                    retryable = true
+                }));
+                return;
+            }
+
             var payload = JsonConvert.SerializeObject(toolResponse);
             WriteHttpResponse(context.Response, 200, payload);
         }
@@ -241,13 +268,31 @@ namespace AutonomousMcp.Editor
                         }
                         if (string.IsNullOrEmpty(envelope.clientName)) envelope.clientName = "tcp-client";
 
-                        var toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
-                        writer.WriteLine(JsonConvert.SerializeObject(toolResponse));
+                        try
+                        {
+                            var toolResponse = AutonomousMcpToolDispatcher.Dispatch(envelope);
+                            writer.WriteLine(JsonConvert.SerializeObject(toolResponse));
+                        }
+                        catch (TimeoutException ex)
+                        {
+                            writer.WriteLine(JsonConvert.SerializeObject(new
+                            {
+                                success = false,
+                                error = ex.Message,
+                                busy = true,
+                                retryable = true
+                            }));
+                        }
                     }
                 }
                 catch (SocketException)
                 {
                     break;
+                }
+                catch (TimeoutException ex)
+                {
+                    // See HttpLoop: an error log here would fail whatever test is running.
+                    Debug.LogWarning($"[AutonomousMCP] TCP main thread busy: {ex.Message}");
                 }
                 catch (Exception ex)
                 {
