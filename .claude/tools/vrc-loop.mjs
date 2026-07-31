@@ -104,13 +104,36 @@ function statePath(slug) {
   return join(STATE_DIR, `${slug}.json`);
 }
 
+// A loop baseline, as opposed to a dossier artifact sharing the same directory.
+function isLoopState(s) {
+  return !!s && (s.kind === "avatar" || s.kind === "world") && !!s.baseline && Array.isArray(s.passes);
+}
+
+// PowerShell redirects write a UTF-8 BOM, which JSON.parse rejects. Strip it rather
+// than declaring an otherwise-valid state file corrupt.
+function readJson(p) {
+  return JSON.parse(readFileSync(p, "utf8").replace(/^\uFEFF/, ""));
+}
+
 function loadState(slug) {
   const p = statePath(slug);
   if (!existsSync(p)) return null;
   try {
-    return JSON.parse(readFileSync(p, "utf8"));
+    return readJson(p);
   } catch (e) {
     fail(`corrupt state file ${p}: ${String(e)}`);
+  }
+}
+
+// Directory scans must not die on one unreadable file: a stray artifact should never
+// make `list` unusable for every real baseline.
+function tryLoadState(slug) {
+  const p = statePath(slug);
+  if (!existsSync(p)) return null;
+  try {
+    return readJson(p);
+  } catch {
+    return null;
   }
 }
 
@@ -261,15 +284,19 @@ function cmdList() {
     return EXIT_OK;
   }
   const files = readdirSync(STATE_DIR).filter((f) => f.endsWith(".json"));
-  if (!files.length) {
-    console.log("no tracked targets (.claude/.vrc-state/ is empty)");
+  const rows = [];
+  for (const f of files) {
+    const s = tryLoadState(f.replace(/\.json$/, ""));
+    // scene-dossier.mjs writes dossier-<slug>.json into this same directory, so
+    // identify loop state by shape rather than by extension.
+    if (!isLoopState(s)) continue;
+    rows.push(`${f.replace(/\.json$/, "").padEnd(28)} ${s.kind}  target=${s.target}  passes=${s.passes.length}  baseline=${s.baseline.at}`);
+  }
+  if (!rows.length) {
+    console.log("no tracked targets (.claude/.vrc-state/ holds no loop baselines)");
     return EXIT_OK;
   }
-  for (const f of files) {
-    const s = loadState(f.replace(/\.json$/, ""));
-    if (!s) continue;
-    console.log(`${f.replace(/\.json$/, "").padEnd(28)} ${s.kind}  target=${s.target}  passes=${s.passes.length}  baseline=${s.baseline.at}`);
-  }
+  for (const row of rows) console.log(row);
   return EXIT_OK;
 }
 
