@@ -334,6 +334,26 @@ Run by the user on a duplicate of LEAF (`LEAF CLEANUP TEST`), deleting `ACC Glas
       the original — 18 entries, 278,879 polys, 28 mats.
 - [x] Duplicate removed afterwards; scene roots back to the original set.
 
+## Supervisor cold launch — PASSED (2026-07-31)
+
+With Unity fully closed (no process, Hub irrelevant):
+
+- [x] `status` correctly reported `bridge: down`, `editor running: false`, and still resolved
+      `2022.3.22f1` and the editor exe from the project's `ProjectVersion.txt`.
+- [x] `ensure` launched the editor and reported **`bridge up after 19s`** with the Unity version and
+      loaded scene. Launch log at `.claude/.vrc-state/unity-launch.log`.
+- [x] Post-launch `status` confirmed the identity check: `answering project:
+      C:\VRChatProjectsAlcom\Leaf`, not merely "something answered on 8080".
+- [x] A real tool call (`execute_csharp` building an `AvatarCost` report) worked immediately after,
+      so the editor is genuinely usable and not just listening.
+- [x] `TraceAndOptimize` survived the save/reload cycle, confirming the earlier scene save landed.
+
+Loose end handled: the scene on disk still contained `LEAF CLEANUP TEST` (with `ACC Glasses`
+intact), meaning the scene had been saved mid-test *before* the deletion, and the close-without-
+saving discarded the agent-side cleanup rather than the duplicate. Removed and saved; scene roots
+are back to the original 8 and `dirty=false`. Worth remembering that "close without saving" can
+revert agent edits made after the user's last manual save.
+
 ## Parked avatar root offered the whole avatar as free space (2026-07-31)
 
 - [x] **Found by looking at the window before running the manual delete test, not by the test.**
