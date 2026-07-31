@@ -20,15 +20,47 @@ namespace AutonomousMcp.Editor.Perception
         public const int DefaultMaxRenderers = 200;
         public const int DefaultMaxMaterials = 80;
 
+        /// <summary>
+        /// Ceilings for one metric. A null tier is one VRChat does not publish for that metric —
+        /// polygons have no "medium", so a value past "good" is simply over the top tier rather
+        /// than being assigned an invented rank name.
+        /// </summary>
+        internal sealed class Tier
+        {
+            public readonly int? Excellent, Good, Medium;
+
+            public Tier(int? excellent, int? good, int? medium)
+            {
+                Excellent = excellent; Good = good; Medium = medium;
+            }
+
+            public string Rank(long value)
+            {
+                if (Excellent.HasValue && value <= Excellent.Value) return "Excellent";
+                if (Good.HasValue && value <= Good.Value) return "Good";
+                if (Medium.HasValue && value <= Medium.Value) return "Medium";
+                return "Over";
+            }
+        }
+
         // PC avatar performance rank thresholds (VRChat creator docs). Quest is stricter.
+        // PcBudgets is projected from these so the numbers live in exactly one place while the
+        // published JSON shape stays byte-identical for existing consumers.
+        internal static readonly Tier PolygonTier = new Tier(32000, 70000, null);
+        internal static readonly Tier MaterialSlotTier = new Tier(4, 8, 16);
+        internal static readonly Tier SkinnedMeshTier = new Tier(1, 8, 16);
+        internal static readonly Tier BoneTier = new Tier(75, 150, 256);
+        internal static readonly Tier PhysBoneTier = new Tier(4, 8, 16);
+        internal static readonly Tier PhysBoneColliderTier = new Tier(4, 8, 16);
+
         public static readonly object PcBudgets = new
         {
-            polygons = new { excellent = 32000, good = 70000 },
-            materialSlots = new { excellent = 4, good = 8, medium = 16 },
-            skinnedMeshes = new { excellent = 1, good = 8, medium = 16 },
-            bones = new { excellent = 75, good = 150, medium = 256 },
-            physBones = new { excellent = 4, good = 8, medium = 16 },
-            physBoneColliders = new { excellent = 4, good = 8, medium = 16 },
+            polygons = new { excellent = PolygonTier.Excellent.Value, good = PolygonTier.Good.Value },
+            materialSlots = new { excellent = MaterialSlotTier.Excellent.Value, good = MaterialSlotTier.Good.Value, medium = MaterialSlotTier.Medium.Value },
+            skinnedMeshes = new { excellent = SkinnedMeshTier.Excellent.Value, good = SkinnedMeshTier.Good.Value, medium = SkinnedMeshTier.Medium.Value },
+            bones = new { excellent = BoneTier.Excellent.Value, good = BoneTier.Good.Value, medium = BoneTier.Medium.Value },
+            physBones = new { excellent = PhysBoneTier.Excellent.Value, good = PhysBoneTier.Good.Value, medium = PhysBoneTier.Medium.Value },
+            physBoneColliders = new { excellent = PhysBoneColliderTier.Excellent.Value, good = PhysBoneColliderTier.Good.Value, medium = PhysBoneColliderTier.Medium.Value },
             expressionParameterCost = new { budget = 256 }
         };
 
@@ -88,6 +120,9 @@ namespace AutonomousMcp.Editor.Perception
                         break;
                     case "budgets":
                         built[section] = root != null ? BuildBudgets(root) : Note("avatar target required");
+                        break;
+                    case "cost":
+                        built[section] = BuildCost(root, scene, maxRenderers, truncated);
                         break;
                     case "world":
                         built[section] = BuildWorld(scene);
@@ -447,6 +482,168 @@ namespace AutonomousMcp.Editor.Perception
                 pc = PcBudgets,
                 note = "PC avatar rank thresholds. Quest is stricter — measure the Quest twin separately."
             };
+        }
+
+        private sealed class CostRow
+        {
+            public string Path, Name;
+            public int InstanceId;
+            public bool Active, ActiveSelf;
+            public int Renderers, SkinnedMeshes, MaterialSlots, Blendshapes;
+            public int Polygons, Verts;
+        }
+
+        /// <summary>
+        /// Per-object cost attribution: what each object costs and what removing it would buy.
+        ///
+        /// The renderers section already reports per-object polygons, but nothing about
+        /// consequence, so answering "what should I delete?" meant hand-writing a query every
+        /// time. The decisive number is <c>ifRemoved</c>: totals minus this object, plus the rank
+        /// that would leave behind.
+        ///
+        /// Inactive objects are deliberately included and called out. VRChat's performance stats
+        /// walk renderers with includeInactive, so a wardrobe toggle that is switched off still
+        /// costs rank and download size — which makes disabled objects the highest-value and
+        /// least-obvious removal candidates on a typical avatar.
+        /// </summary>
+        private static object BuildCost(GameObject root, Scene scene, int max, Dictionary<string, bool> truncated)
+        {
+            var groups = new Dictionary<int, CostRow>();
+            var order = new List<int>();
+            long totalPolys = 0, totalVerts = 0;
+            int totalSlots = 0, skinnedCount = 0, meshCount = 0;
+
+            foreach (var r in EnumerateRenderers(root, scene))
+            {
+                var mesh = MeshOf(r);
+                var polys = TriangleCount(mesh);
+                var verts = mesh != null ? mesh.vertexCount : 0;
+                var slots = r.sharedMaterials != null ? r.sharedMaterials.Length : 0;
+                var isSkinned = r is SkinnedMeshRenderer;
+
+                totalPolys += polys;
+                totalVerts += verts;
+                totalSlots += slots;
+                if (isSkinned) skinnedCount++; else meshCount++;
+
+                var go = r.gameObject;
+                var id = go.GetInstanceID();
+                if (!groups.TryGetValue(id, out var row))
+                {
+                    groups[id] = row = new CostRow
+                    {
+                        Path = HierarchyPath(go.transform),
+                        Name = go.name,
+                        InstanceId = id,
+                        Active = go.activeInHierarchy,
+                        ActiveSelf = go.activeSelf
+                    };
+                    order.Add(id);
+                }
+                row.Renderers++;
+                if (isSkinned) row.SkinnedMeshes++;
+                row.Polygons += polys;
+                row.Verts += verts;
+                row.MaterialSlots += slots;
+                row.Blendshapes += mesh != null ? mesh.blendShapeCount : 0;
+            }
+
+            var rows = order.Select(id => groups[id]).ToList();
+            rows.Sort((a, b) => b.Polygons.CompareTo(a.Polygons));
+
+            long inactivePolys = 0;
+            int inactiveSlots = 0, inactiveObjects = 0;
+            foreach (var row in rows)
+            {
+                if (row.Active) continue;
+                inactiveObjects++;
+                inactivePolys += row.Polygons;
+                inactiveSlots += row.MaterialSlots;
+            }
+
+            var capped = rows;
+            if (rows.Count > max) { truncated["cost"] = true; capped = rows.Take(max).ToList(); }
+
+            var candidates = capped.Select(row => (object)new
+            {
+                path = row.Path,
+                name = row.Name,
+                instanceId = row.InstanceId,
+                active = row.Active,
+                activeSelf = row.ActiveSelf,
+                renderers = row.Renderers,
+                skinnedMeshes = row.SkinnedMeshes,
+                polygons = row.Polygons,
+                verts = row.Verts,
+                materialSlots = row.MaterialSlots,
+                blendshapes = row.Blendshapes,
+                shareOfPolygons = totalPolys > 0 ? Math.Round(row.Polygons / (double)totalPolys, 4) : 0d,
+                ifRemoved = Project(totalPolys - row.Polygons, totalSlots - row.MaterialSlots)
+            }).ToList();
+
+            return new
+            {
+                totals = new
+                {
+                    polygons = totalPolys,
+                    verts = totalVerts,
+                    materialSlots = totalSlots,
+                    skinnedMeshes = skinnedCount,
+                    meshRenderers = meshCount,
+                    objects = rows.Count
+                },
+                rank = new
+                {
+                    polygons = PolygonTier.Rank(totalPolys),
+                    materialSlots = MaterialSlotTier.Rank(totalSlots),
+                    skinnedMeshes = SkinnedMeshTier.Rank(skinnedCount)
+                },
+                inactive = new
+                {
+                    objects = inactiveObjects,
+                    polygons = inactivePolys,
+                    materialSlots = inactiveSlots,
+                    shareOfPolygons = totalPolys > 0 ? Math.Round(inactivePolys / (double)totalPolys, 4) : 0d,
+                    ifAllRemoved = Project(totalPolys - inactivePolys, totalSlots - inactiveSlots)
+                },
+                candidates,
+                pc = PcBudgets,
+                note = "Costs include INACTIVE objects on purpose — VRChat's stats count renderers " +
+                       "with includeInactive, so a disabled toggle still costs rank and download " +
+                       "size. 'Over' means past the highest tier VRChat publishes for that metric. " +
+                       "Removing a child of a prefab instance is a prefab override: it holds for " +
+                       "upload, but reverting the prefab brings it back."
+            };
+        }
+
+        private static object Project(long polygons, int materialSlots) => new
+        {
+            polygons,
+            polygonRank = PolygonTier.Rank(polygons),
+            materialSlots,
+            materialSlotRank = MaterialSlotTier.Rank(materialSlots)
+        };
+
+        private static Mesh MeshOf(Renderer r)
+        {
+            if (r is SkinnedMeshRenderer smr) return smr.sharedMesh;
+            var mf = r.GetComponent<MeshFilter>();
+            return mf != null ? mf.sharedMesh : null;
+        }
+
+        // GetIndexCount rather than mesh.triangles.Length: the latter allocates and marshals the
+        // whole index array per renderer — ~150k ints for one head — purely to divide by three.
+        // Non-triangle submeshes are skipped instead of being miscounted as triangles.
+        private static int TriangleCount(Mesh mesh)
+        {
+            if (mesh == null) return 0;
+            long indices = 0;
+            for (int i = 0; i < mesh.subMeshCount; i++)
+            {
+                if (mesh.GetTopology(i) != MeshTopology.Triangles) continue;
+                indices += mesh.GetIndexCount(i);
+            }
+            return (int)(indices / 3);
         }
 
         private static object BuildWorld(Scene scene)

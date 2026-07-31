@@ -1,0 +1,32 @@
+Add per-object cost attribution to the dossier, and correct the toggle-cost claim
+
+New "cost" dossier section: every renderer-holding object with polygons, material
+slots, share of total and ifRemoved -- the totals and rank left behind without it
+-- sorted by cost, plus an inactive roll-up with ifAllRemoved. Inactive objects
+are included deliberately, because VRChat's stats count renderers with
+includeInactive, which makes disabled wardrobe toggles the least obvious
+candidates.
+
+Rank thresholds now live in one place. PolygonTier/MaterialSlotTier/etc are the
+source of truth and PcBudgets is projected from them, so the published JSON shape
+is unchanged. "Over" means past the highest tier VRChat publishes for a metric
+rather than inventing a name for a tier that does not exist.
+
+Uses GetIndexCount rather than mesh.triangles, which allocates and marshals the
+whole index array per renderer -- roughly 150k ints for one head -- only to divide
+its length by three. Non-triangle submeshes are skipped instead of miscounted.
+
+Running it corrected two claims recorded earlier today:
+
+- The disabled-toggle cost was quoted in verts, but VRChat ranks polygons and the
+  two order differently. ANIMAL DOG is the largest mesh by verts (43,000) and only
+  8th by polygons (20,315), so ranking candidates by vertex count picks the wrong
+  target.
+- The real figure is 86,619 of 278,879 polys (31%), and ifAllRemoved shows that
+  deleting every disabled object still leaves 192,260 -- far past the 70,000 good
+  ceiling. It buys download size and memory but no rank change, contradicting the
+  earlier "beats every importer flag" framing.
+
+Wired into scene-dossier.mjs with a candidates table and an inline summary line.
+Two tests cover inactive accounting plus the removal projection, and the polygon
+rank boundary at exactly 32,000 and one past it. StateDossierTests 9/9.

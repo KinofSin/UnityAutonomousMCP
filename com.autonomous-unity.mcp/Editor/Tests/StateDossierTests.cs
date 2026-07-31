@@ -149,6 +149,96 @@ namespace AutonomousMcp.SelfTest
             _texPath = null;
         }
 
+        // Degenerate triangles all referencing the same three vertices: the cost section counts
+        // indices, so this builds an exact triangle count without allocating real geometry.
+        private static Mesh MakeTriMesh(int triangleCount)
+        {
+            var mesh = new Mesh { indexFormat = UnityEngine.Rendering.IndexFormat.UInt32 };
+            mesh.vertices = new[] { Vector3.zero, Vector3.right, Vector3.up };
+            var indices = new int[triangleCount * 3];
+            for (int i = 0; i < triangleCount; i++)
+            {
+                indices[i * 3] = 0; indices[i * 3 + 1] = 1; indices[i * 3 + 2] = 2;
+            }
+            mesh.triangles = indices;
+            return mesh;
+        }
+
+        private static GameObject AddRenderer(GameObject parent, string name, int triangles, bool active)
+        {
+            var go = new GameObject(name);
+            go.transform.SetParent(parent.transform, false);
+            go.AddComponent<MeshFilter>().sharedMesh = MakeTriMesh(triangles);
+            go.AddComponent<MeshRenderer>();
+            go.SetActive(active);
+            return go;
+        }
+
+        private static JObject CostSection(GameObject root)
+        {
+            var args = new JObject
+            {
+                ["instanceId"] = root.GetInstanceID(),
+                ["sections"] = new JArray("cost")
+            };
+            var payload = JToken.FromObject(StateDossier.Build(args)) as JObject;
+            Assert.IsNotNull(payload);
+            return (JObject)payload["sections"]["cost"];
+        }
+
+        [Test]
+        public void Cost_counts_inactive_renderers_and_projects_their_removal()
+        {
+            // The whole point of the section: VRChat's stats count renderers with includeInactive,
+            // so a disabled wardrobe toggle must still show up as cost.
+            var root = new GameObject("CostInactiveRoot");
+            try
+            {
+                AddRenderer(root, "Shown", 10, active: true);
+                AddRenderer(root, "Hidden", 4, active: false);
+
+                var cost = CostSection(root);
+
+                Assert.AreEqual(14, cost["totals"]["polygons"].Value<int>(),
+                    "totals must include the disabled renderer");
+                Assert.AreEqual(1, cost["inactive"]["objects"].Value<int>());
+                Assert.AreEqual(4, cost["inactive"]["polygons"].Value<int>());
+                Assert.AreEqual(10, cost["inactive"]["ifAllRemoved"]["polygons"].Value<int>());
+
+                // Sorted by cost, and each row projects the total left behind without it.
+                var candidates = (JArray)cost["candidates"];
+                Assert.AreEqual("Shown", candidates[0]["name"].Value<string>());
+                Assert.AreEqual(true, candidates[0]["active"].Value<bool>());
+                Assert.AreEqual(4, candidates[1]["polygons"].Value<int>());
+                Assert.AreEqual(false, candidates[1]["active"].Value<bool>());
+                Assert.AreEqual(10, candidates[1]["ifRemoved"]["polygons"].Value<int>());
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Cost_rank_tracks_the_published_polygon_thresholds()
+        {
+            var root = new GameObject("CostRankRoot");
+            try
+            {
+                // Exactly the Excellent ceiling is still Excellent...
+                AddRenderer(root, "AtCeiling", 32000, active: true);
+                Assert.AreEqual("Excellent", CostSection(root)["rank"]["polygons"].Value<string>());
+
+                // ...and one triangle past it is not.
+                AddRenderer(root, "OneMore", 1, active: true);
+                Assert.AreEqual("Good", CostSection(root)["rank"]["polygons"].Value<string>());
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
         [Test]
         public void ComputeStateHash_stable_for_same_scene_root()
         {

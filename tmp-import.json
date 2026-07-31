@@ -1,0 +1,6 @@
+{
+  "action": "set_property",
+  "asset_path": "Assets/TOGGLES AN ANIMS/PREFABS/LEAF.fbx",
+  "property_path": "m_IsReadable",
+  "value": false
+}

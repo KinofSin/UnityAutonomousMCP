@@ -231,12 +231,17 @@ failure whose name is under `AutonomousMcp.SelfTest`.
       lossy and only shrinks disk, not runtime), `optimizeMeshVertices/Polygons` already on, and the
       importer has `importCameras`/`importLights` **true** while the hierarchy contains **zero** of
       either, so flipping them costs a reimport for no gain.
-- [ ] **Biggest remaining win is not an import setting: ~110,800 of 231,895 verts are on *disabled*
-      toggles** — `ANIMAL DOG` (43,000), `ANIMAL Rabbit Ears` (32,397), `HAIR LONG` (18,597),
-      `Hair Curly` (16,783). VRChat's performance stats walk renderers with `includeInactive`, so
-      these still count toward rank and download size while contributing nothing. Deleting rather
-      than disabling an unused toggle beats every importer flag here. User's call — it removes
-      wardrobe functionality. Worth confirming against the SDK's own stats panel first.
+- [x] ~~Biggest remaining win: ~110,800 of 231,895 **verts** are on disabled toggles~~ —
+      **measured properly by the new `cost` section, and the framing was wrong twice.**
+      (a) It was quoted in *verts*; VRChat ranks *polygons*, and they order differently —
+      `ANIMAL DOG` is the largest mesh by verts (43,000) but only **8th** by polygons (20,315),
+      so ranking removal candidates by vertex count picks the wrong target outright.
+      (b) The real figure is **86,619 of 278,879 polys (31%)** on 5 disabled objects, and
+      `ifAllRemoved` says deleting *all* of them leaves **192,260** — still far past the 70,000
+      `good` ceiling. So it is worth real download size and memory but **changes no rank**,
+      which is the opposite of the "beats every importer flag" claim made above.
+      LEAF is `Over` on polygons (278,879), material slots (28) and skinned meshes (18); no
+      cleanup short of heavy decimation moves its PC rank.
 - [ ] `LEAF.fbx` imports 150 blendshapes on the head with **blend-shape normals = `Calculate`**,
       which is very likely why `Body` alone is 13.47 MB. Setting it to `None` is the largest
       mesh-memory win available, but it changes expression shading — usually imperceptible,

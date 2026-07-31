@@ -41,6 +41,7 @@ const AVATAR_SECTIONS = [
   "physbones",
   "animators",
   "budgets",
+  "cost",
 ];
 
 const SCENE_SECTIONS = ["identity", "world", "renderers", "materials", "textures"];
@@ -182,6 +183,30 @@ function toMarkdown(slug, d) {
     lines.push("");
   }
 
+  const cost = d.sections?.cost;
+  if (cost?.totals) {
+    const pct = (n) => `${Math.round((n ?? 0) * 100)}%`;
+    lines.push("## Cost attribution");
+    lines.push(
+      `- totals: polys=${cost.totals.polygons} (${cost.rank?.polygons}) mats=${cost.totals.materialSlots} (${cost.rank?.materialSlots}) smr=${cost.totals.skinnedMeshes} (${cost.rank?.skinnedMeshes})`
+    );
+    const off = cost.inactive;
+    if (off?.objects) {
+      lines.push(
+        `- **inactive: ${off.objects} objects = ${off.polygons} polys (${pct(off.shareOfPolygons)})** — VRChat counts these; removing all leaves ${off.ifAllRemoved?.polygons} (${off.ifAllRemoved?.polygonRank})`
+      );
+    }
+    lines.push("");
+    lines.push("| object | active | polys | share | mats | polys if removed | rank after |");
+    lines.push("|---|---|---|---|---|---|---|");
+    for (const c of cost.candidates ?? []) {
+      lines.push(
+        `| ${c.path} | ${c.active ? "on" : "**OFF**"} | ${c.polygons} | ${pct(c.shareOfPolygons)} | ${c.materialSlots} | ${c.ifRemoved?.polygons} | ${c.ifRemoved?.polygonRank} |`
+      );
+    }
+    lines.push("");
+  }
+
   const rends = d.sections?.renderers?.renderers ?? [];
   if (rends.length) {
     lines.push(`## Renderers (${rends.length})`);
@@ -288,6 +313,17 @@ function printSummary(slug, paths, d) {
     );
   }
   console.log(`  materials=${mats.length} (locked=${locked})  renderers=${rends.length}`);
+
+  // Surfaced in the inline summary because it is the finding people do not go looking for:
+  // a switched-off wardrobe toggle still costs rank, so it reads as free when it is not.
+  const cost = d.sections?.cost;
+  if (cost?.inactive?.objects) {
+    const off = cost.inactive;
+    console.log(
+      `  inactive cost: ${off.objects} disabled objects = ${off.polygons} polys ` +
+        `(${Math.round((off.shareOfPolygons ?? 0) * 100)}% of ${cost.totals?.polygons}) — VRChat counts these`
+    );
+  }
   if (top.length) {
     console.log("  heaviest renderers:");
     for (const r of top) console.log(`    ${r.tris} tris  ${r.path}`);
