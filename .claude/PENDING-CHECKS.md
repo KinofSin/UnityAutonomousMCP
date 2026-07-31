@@ -33,9 +33,8 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
 
 ## CI
 
-- [ ] Confirm `ci.yml` actually goes green on the private remote. The relay build, smoke,
-      `npm test` and the `node --check` loop were all run locally and pass, but the workflow
-      itself has never executed on a runner.
+- [x] Confirm `ci.yml` goes green on the private remote — run 30614005298, both jobs passed
+      (relay 24s, agent-scripts 6s).
 - [ ] Decide whether to commit `package-lock.json` (currently gitignored). Without it CI must
       use `npm install`, so builds are not reproducible.
 
