@@ -142,6 +142,15 @@ namespace AutonomousMcp.Editor.UI
                     "Deleting a renderer does NOT reclaim bones.",
                     EditorStyles.wordWrappedMiniLabel);
 
+                if (!_report.RootActive)
+                {
+                    EditorGUILayout.HelpBox(
+                        $"'{_report.RootName}' is switched OFF in the scene. Disabled counts below are " +
+                        "measured inside the avatar, ignoring the root — otherwise every renderer on a " +
+                        "parked avatar would look like free space. Enable the root to judge visually.",
+                        MessageType.Warning);
+                }
+
                 if (_report.InactiveObjects > 0)
                 {
                     EditorGUILayout.LabelField(
@@ -157,7 +166,7 @@ namespace AutonomousMcp.Editor.UI
                             GUILayout.Width(160)))
                     {
                         _selected.Clear();
-                        foreach (var e in _report.Entries.Where(e => !e.Active && !e.IsDriven))
+                        foreach (var e in _report.Entries.Where(e => !e.ActiveInAvatar && !e.IsDriven))
                             _selected.Add(e.InstanceId);
                     }
                 }
@@ -176,7 +185,7 @@ namespace AutonomousMcp.Editor.UI
         private IEnumerable<CostEntry> VisibleEntries()
         {
             IEnumerable<CostEntry> rows = _report.Entries;
-            if (_onlyDisabled) rows = rows.Where(e => !e.Active);
+            if (_onlyDisabled) rows = rows.Where(e => !e.ActiveInAvatar);
             if (_onlyUndriven) rows = rows.Where(e => !e.IsDriven);
 
             switch (_sort)
@@ -184,7 +193,7 @@ namespace AutonomousMcp.Editor.UI
                 case SortMode.MaterialSlots: return rows.OrderByDescending(e => e.MaterialSlots);
                 case SortMode.ExclusiveVram: return rows.OrderByDescending(e => e.ExclusiveVramBytes);
                 case SortMode.Name: return rows.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase);
-                case SortMode.DisabledFirst: return rows.OrderBy(e => e.Active).ThenByDescending(e => e.Polygons);
+                case SortMode.DisabledFirst: return rows.OrderBy(e => e.ActiveInAvatar).ThenByDescending(e => e.Polygons);
                 case SortMode.UndrivenFirst: return rows.OrderBy(e => e.IsDriven).ThenByDescending(e => e.Polygons);
                 default: return rows.OrderByDescending(e => e.Polygons);
             }
@@ -222,8 +231,8 @@ namespace AutonomousMcp.Editor.UI
                         }
 
                         var prev = GUI.color;
-                        if (!e.Active && e.IsDriven) GUI.color = new Color(1f, 0.78f, 0.45f);
-                        else if (!e.Active) GUI.color = new Color(0.7f, 0.9f, 0.7f);
+                        if (!e.ActiveInAvatar && e.IsDriven) GUI.color = new Color(1f, 0.78f, 0.45f);
+                        else if (!e.ActiveInAvatar) GUI.color = new Color(0.7f, 0.9f, 0.7f);
                         GUILayout.Label(new GUIContent(e.Name, e.Path), GUILayout.MinWidth(140));
                         GUI.color = prev;
 
@@ -233,7 +242,7 @@ namespace AutonomousMcp.Editor.UI
                         var excl = e.ExclusiveVramBytes / (1024d * 1024d);
                         GUILayout.Label(excl > 0.01 ? excl.ToString("F1") : "-", GUILayout.Width(52));
                         GUILayout.Label(e.PhysBones > 0 ? e.PhysBones.ToString() : "-", GUILayout.Width(28));
-                        GUILayout.Label(e.Active ? "on" : "OFF", GUILayout.Width(40));
+                        GUILayout.Label(e.ActiveInAvatar ? "on" : "OFF", GUILayout.Width(40));
                         DrawDrivenBy(e);
 
                         if (GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(40)))
@@ -344,20 +353,24 @@ namespace AutonomousMcp.Editor.UI
 
             long polys = targets.Sum(t => (long)t.Entry.Polygons);
             var after = _report.Without(polys, targets.Sum(t => t.Entry.MaterialSlots));
-            var active = targets.Where(t => t.Entry.Active).ToList();
+            var active = targets.Where(t => t.Entry.ActiveInAvatar).ToList();
             var driven = targets.Where(t => t.Entry.IsDriven).ToList();
             var prefabs = targets.Where(t => PrefabUtility.IsPartOfPrefabInstance(t.Go)).ToList();
 
             var message =
                 $"Delete {targets.Count} object(s), saving {polys:N0} polys?\n\n" +
                 string.Join("\n", targets.Take(12).Select(t =>
-                    $"  {(t.Entry.Active ? "on " : "OFF")}  {t.Entry.Name}  ({t.Entry.Polygons:N0})" +
+                    $"  {(t.Entry.ActiveInAvatar ? "on " : "OFF")}  {t.Entry.Name}  ({t.Entry.Polygons:N0})" +
                     (t.Entry.IsDriven ? $"  ← {t.Entry.DrivenBySummary}" : ""))) +
                 (targets.Count > 12 ? $"\n  …and {targets.Count - 12} more" : "") +
                 $"\n\nLeaves {after.Polygons:N0} polys ({after.PolygonRank}).";
 
             if (active.Count > 0)
-                message += $"\n\nWARNING: {active.Count} of these are currently ENABLED and visible.";
+                message += _report.RootActive
+                    ? $"\n\nWARNING: {active.Count} of these are currently ENABLED and visible."
+                    : $"\n\nWARNING: {active.Count} of these are ENABLED within the avatar — they are only " +
+                      $"hidden because '{_report.RootName}' itself is switched off, and would be visible " +
+                      "the moment you enable it.";
 
             if (driven.Count > 0)
             {

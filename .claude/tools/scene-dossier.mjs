@@ -201,6 +201,11 @@ function toMarkdown(slug, d) {
     lines.push(
       `- totals: polys=${cost.totals.polygons} (${cost.rank?.polygons}) mats=${cost.totals.materialSlots} (${cost.rank?.materialSlots}) smr=${cost.totals.skinnedMeshes} (${cost.rank?.skinnedMeshes}) bones=${cost.totals?.bones ?? "?"} pb=${cost.totals?.physBones ?? "?"}`
     );
+    if (cost.rootActive === false) {
+      lines.push(
+        `- **root is switched OFF in the scene** — nothing below is visible; "active" is measured within the avatar, not activeInHierarchy`
+      );
+    }
     const off = cost.inactive;
     if (off?.objects) {
       lines.push(

@@ -505,7 +505,8 @@ namespace AutonomousMcp.Editor.Perception
                 path = e.Path,
                 name = e.Name,
                 instanceId = e.InstanceId,
-                active = e.Active,
+                active = e.ActiveInAvatar,
+                activeInHierarchy = e.Active,
                 activeSelf = e.ActiveSelf,
                 renderers = e.Renderers,
                 skinnedMeshes = e.SkinnedMeshes,
@@ -555,6 +556,7 @@ namespace AutonomousMcp.Editor.Perception
                     materialSlots = report.MaterialSlotRank,
                     skinnedMeshes = report.SkinnedMeshRank
                 },
+                rootActive = report.RootActive,
                 inactive = new
                 {
                     objects = report.InactiveObjects,
@@ -577,7 +579,12 @@ namespace AutonomousMcp.Editor.Perception
                 candidates,
                 pc = PcBudgets,
                 note = "Costs include INACTIVE objects on purpose — VRChat's stats count renderers " +
-                       "with includeInactive. 'disabled' is NOT 'unused': check driven, which is true " +
+                       "with includeInactive. 'active' is measured WITHIN the avatar: VRChat scenes " +
+                       "park every avatar root disabled and enable one at a time, so activeInHierarchy " +
+                       "(reported separately) is false for everything and would offer a whole parked " +
+                       "avatar as free space. When rootActive is false nothing here is visible in the " +
+                       "scene — enable the root before judging anything visually. " +
+                       "'disabled' is NOT 'unused': check driven, which is true " +
                        "only when a menu toggle switches the object (m_IsActive / m_Enabled curve) or " +
                        "VRCFury / Modular Avatar references it — those break on delete. animatedOnly " +
                        "means blendshape or material curves target it and nothing more, which is safe " +

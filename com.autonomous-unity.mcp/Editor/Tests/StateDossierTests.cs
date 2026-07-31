@@ -298,6 +298,45 @@ namespace AutonomousMcp.SelfTest
         }
 
         [Test]
+        public void Cost_ignores_a_parked_avatar_root_when_counting_disabled()
+        {
+            // VRChat scenes keep every avatar root disabled and enable one at a time. Counting
+            // activeInHierarchy then reports the entire avatar as disabled and undriven, which the
+            // cleanup window offered as free space on a real parked avatar.
+            var root = new GameObject("ParkedRoot");
+            try
+            {
+                AddRenderer(root, "Shown", 100, active: true);
+                AddRenderer(root, "Hidden", 50, active: false);
+                root.SetActive(false);
+
+                var report = AvatarCost.Build(root, root.scene);
+                Assert.IsFalse(report.RootActive, "the root is parked");
+
+                var shown = report.Entries.Find(e => e.Name == "Shown");
+                Assert.IsFalse(shown.Active, "activeInHierarchy is genuinely false");
+                Assert.IsTrue(shown.ActiveInAvatar, "but it is enabled within the avatar");
+
+                var hidden = report.Entries.Find(e => e.Name == "Hidden");
+                Assert.IsFalse(hidden.ActiveInAvatar);
+
+                Assert.AreEqual(1, report.InactiveObjects, "only the genuinely switched-off child counts");
+                Assert.AreEqual(50, report.InactivePolygons);
+
+                var cost = CostSection(root);
+                Assert.IsFalse(cost.Value<bool>("rootActive"));
+                var candidates = (JArray)cost["candidates"];
+                var shownRow = candidates.First(t => t.Value<string>("name") == "Shown");
+                Assert.IsTrue(shownRow.Value<bool>("active"));
+                Assert.IsFalse(shownRow.Value<bool>("activeInHierarchy"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
         public void Cost_does_not_treat_property_animation_as_driven()
         {
             // A blendshape or material curve targets an object without ever switching it off.

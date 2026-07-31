@@ -15,6 +15,16 @@ namespace AutonomousMcp.Editor.Perception
         public int InstanceId;
         public bool Active;
         public bool ActiveSelf;
+
+        /// <summary>
+        /// Switched off *within* the avatar, ignoring whether the root itself is enabled.
+        ///
+        /// VRChat scenes park every avatar root disabled and enable one at a time, which makes
+        /// activeInHierarchy false for every renderer on every avatar. Reading removal candidates
+        /// off that offers the entire body as free space — observed live on a parked avatar whose
+        /// 19 renderers all reported disabled and undriven.
+        /// </summary>
+        public bool ActiveInAvatar;
         public int Renderers;
         public int SkinnedMeshes;
         public int Polygons;
@@ -91,6 +101,15 @@ namespace AutonomousMcp.Editor.Perception
 
         public List<TwinInfo> Twins = new List<TwinInfo>();
 
+        /// <summary>
+        /// False when the avatar root is parked (disabled) in the scene. Every renderer then reads
+        /// as inactive, so the inactive roll-up is measured within the avatar instead — but the
+        /// caller still has to say so, because "19 disabled objects" means something very
+        /// different depending on this flag.
+        /// </summary>
+        public bool RootActive = true;
+        public string RootName;
+
         public string PolygonRank => StateDossier.PolygonTier.Rank(TotalPolygons);
         public string MaterialSlotRank => StateDossier.MaterialSlotTier.Rank(TotalMaterialSlots);
         public string SkinnedMeshRank => StateDossier.SkinnedMeshTier.Rank(SkinnedMeshes);
@@ -159,7 +178,8 @@ namespace AutonomousMcp.Editor.Perception
                         Name = go.name,
                         InstanceId = id,
                         Active = go.activeInHierarchy,
-                        ActiveSelf = go.activeSelf
+                        ActiveSelf = go.activeSelf,
+                        ActiveInAvatar = IsActiveInAvatar(go, root)
                     };
                     report.Entries.Add(entry);
                 }
@@ -187,7 +207,7 @@ namespace AutonomousMcp.Editor.Perception
                 if (drivers.TryGetValue(entry.InstanceId, out var list))
                     entry.DrivenBy = list;
 
-                if (entry.Active) continue;
+                if (entry.ActiveInAvatar) continue;
                 report.InactiveObjects++;
                 report.InactivePolygons += entry.Polygons;
                 report.InactiveMaterialSlots += entry.MaterialSlots;
@@ -203,8 +223,27 @@ namespace AutonomousMcp.Editor.Perception
                 }
             }
 
+            report.RootActive = root == null || root.activeInHierarchy;
+            report.RootName = root != null ? root.name : scene.name;
             report.Twins = FindTwins(root, scene);
             return report;
+        }
+
+        /// <summary>
+        /// Enabled all the way up to <paramref name="root"/>, but not counting the root's own
+        /// switch. Falls back to activeInHierarchy for whole-scene scans, where there is no root
+        /// whose state should be discounted.
+        /// </summary>
+        private static bool IsActiveInAvatar(GameObject go, GameObject root)
+        {
+            if (root == null) return go.activeInHierarchy;
+            var t = go.transform;
+            while (t != null && t.gameObject != root)
+            {
+                if (!t.gameObject.activeSelf) return false;
+                t = t.parent;
+            }
+            return true;
         }
 
         private static void CollectTextures(

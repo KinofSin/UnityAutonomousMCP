@@ -316,6 +316,26 @@ failure whose name is under `AutonomousMcp.SelfTest`.
       failures as the documented baseline, zero in this package. Closes the regression check the
       cleanup plan asked for.
 
+## Parked avatar root offered the whole avatar as free space (2026-07-31)
+
+- [x] **Found by looking at the window before running the manual delete test, not by the test.**
+      Opening the Cleanup window on `ALLEXSI` showed "19 disabled (361,630 polys): 0 menu-driven,
+      19 undriven" and a **Select undriven (19)** button. Every renderer on the avatar. Clicking it
+      and confirming would have deleted the entire avatar, and nothing in the dialog would have
+      looked wrong — the objects genuinely were disabled and genuinely had no drivers.
+- [x] Cause: `CostEntry.Active` used `activeInHierarchy`. Every avatar root in a VRChat scene is
+      parked disabled and enabled one at a time, so `activeInHierarchy` is false for everything on
+      every avatar. `ActiveInAvatar` now walks up to the root without counting the root's own
+      switch, and `CostReport.RootActive` reports the parked state so the window and the dossier
+      can say so out loud.
+- [x] After the fix: `ALLEXSI` reports **0** disabled objects (correct — nothing inside it is
+      switched off), `LEAF` and its duplicate still report 5 disabled / 5 driven / 0 undriven.
+- [x] Full EditMode suite: **265 tests, 241 passed, 17 failed, 7 skipped** — the same 17 YUCP
+      failures, zero in this package.
+- [ ] Worth a second look: `ALLEXSI` resolves **0 drivers** across 19 renderers. Plausible if its
+      toggles are structured differently from LEAF's, but a whole avatar with no detected driver is
+      the same shape of blind spot as the one above. Check before anyone cleans that avatar.
+
 ## TraceAndOptimize on LEAF (2026-07-31)
 
 - [x] Kept, and the scene saved (`Assets/OPEN ME PLZ.unity`). Inert at edit time — NDMF runs it on
