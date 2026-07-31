@@ -83,6 +83,51 @@ Format: one `- [ ]` per item. Ticked (`- [x]`) items are ignored by the hook.
       from the dossier. On the open scene that moved the signal from "2 oversized" (128 KB of
       untouchable data) to the actual 301 MB across 51 textures.
 
+## Advisor HUD (2026-07-31, verified with a human in the loop)
+
+- [x] **Full round trip works.** AI → user: `hud_post` and `hud_post_card` both render in the feed.
+      User → AI: a card button, a typed note and an attached selection all arrived via `hud_poll`
+      intact and correctly typed, and the outbox drained to zero. The selection payload is
+      genuinely useful on its own — it reported LEAF's four VRCFury components unprompted.
+      This settles the open question from the overhaul: the HUD is real, so `hud-drain.mjs`
+      stays.
+- [x] Card titles were **silently clipped** — `boldLabel` does not wrap and IMGUI truncates with no
+      ellipsis, so "…normal maps on LEAF?" rendered as "…normal map". Titles now derive from
+      `wordWrappedLabel`. Bad on a surface whose job is asking yes/no questions.
+- [x] The queue showed `[card_action] roundtrip-test` — which card, but not which **button**, so
+      approve and dismiss looked identical while queued. Now `roundtrip-test → dismiss`, and
+      selections/console entries summarise instead of dumping raw JSON.
+- [x] The Screenshot attach enqueued a **project-relative** path, which the AI resolves against its
+      own repo, not the Unity project — so the file was never findable. Now absolute.
+
+## Bugs the HUD test flushed out
+
+- [x] **`unity-verify.mjs` could report a false clean.** It printed "editor is compiling" off the
+      response to the `refresh_unity` call that *starts* the compile, so the note fired almost
+      every run and re-running just triggered another one. Worse, it then read the console
+      immediately — before the compile finished — so a fresh syntax error would not be logged yet
+      and the harness would print `clean`. The one tool whose job is catching bad C# had the exact
+      false-clean failure mode its own header warns about for `get_compilation_errors`. It now
+      polls `health_check` until `isCompiling`/`isUpdating` are clear for three consecutive
+      samples. Verified both directions: a deliberate `CS0029` probe is caught (exit 1), and clean
+      after removal. Console entries also print as `error CS0029: …` + `file:line` instead of a
+      raw JSON blob (the entries use PascalCase keys, which the formatter did not match).
+- [x] **`capture_screenshot source:"editor"` produced upside-down images.** The composite path
+      flips each dock-area tile *and* the whole image, so panels landed in the right places with
+      their contents inverted — layout upright, all text mirrored. `GetPixels` after `ReadPixels`
+      is already top-down where the UV origin is at the top (D3D). Now guarded by
+      `SystemInfo.graphicsUVStartsAtTop`. The single-window path was already correct and is
+      untouched. Verified by capturing and reading the result back.
+
+## Learned from the first readable editor screenshot
+
+- [ ] **The editor is running the Russian localization** (Позиция / Поворот / Размер in the
+      Inspector). `execute_menu_item` takes English menu paths, so anything driving menus by
+      string may silently miss. Worth checking before relying on menu automation.
+- [ ] Console carries a recurring `Serialization depth limit 10 exceeded at
+      'ConditionGroup.conditions'` warning and `Cannot add menu item 'Tools/YUCP/Other…'`.
+      Third-party, but they are noise in every `read_console` and worth knowing are expected.
+
 ## Third-party test noise (not ours — do not chase)
 
 The full EditMode suite is **260 tests: 236 pass, 17 fail, 7 skip**. Every one of the 17 belongs

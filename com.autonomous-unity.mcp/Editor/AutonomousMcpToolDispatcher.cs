@@ -1788,13 +1788,18 @@ namespace AutonomousMcp.Editor
                             ctex = new Texture2D(cw, ch, TextureFormat.RGB24, false);
                             ctex.ReadPixels(new Rect(0, 0, cw, ch), 0, 0);
                             ctex.Apply();
-                            var cpx = ctex.GetPixels(); // bottom-up
+                            // Row order out of ReadPixels is platform dependent: on D3D (UV origin
+                            // at top) index 0 is already the tile's TOP row, so flipping here would
+                            // invert each panel's contents while leaving the panels themselves in
+                            // the right place — text upside down inside an upright layout.
+                            var cpx = ctex.GetPixels();
+                            var srcTopDown = SystemInfo.graphicsUVStartsAtTop;
                             for (int prowTop = 0; prowTop < ch; prowTop++)
                             {
                                 int dstRow = localYTop + prowTop;
                                 if (dstRow < 0 || dstRow >= H) continue;
-                                int srcRowBottom = ch - 1 - prowTop;
-                                int dstBase = dstRow * W, srcBase = srcRowBottom * cw;
+                                int srcRow = srcTopDown ? prowTop : ch - 1 - prowTop;
+                                int dstBase = dstRow * W, srcBase = srcRow * cw;
                                 for (int col = 0; col < cw; col++)
                                 {
                                     int dstCol = localX + col;

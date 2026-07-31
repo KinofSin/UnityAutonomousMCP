@@ -159,13 +159,35 @@ namespace AutonomousMcp.Editor.UI
             try
             {
                 var jo = JObject.Parse(payload);
+
+                // Which button was pressed matters as much as which card — approve and dismiss are
+                // indistinguishable in the queue otherwise.
+                var actionId = jo.Value<string>("actionId");
+                if (!string.IsNullOrEmpty(actionId))
+                    return Truncate((jo.Value<string>("cardId") ?? "card") + " → " + actionId, 60);
+
+                if (jo["objects"] is JArray objects)
+                {
+                    var names = objects
+                        .Select(o => o.Value<string>("name"))
+                        .Where(n => !string.IsNullOrEmpty(n))
+                        .ToArray();
+                    if (names.Length == 1) return Truncate(names[0], 60);
+                    if (names.Length > 1)
+                        return Truncate(names[0] + " +" + (names.Length - 1) + " more", 60);
+                }
+
+                if (jo["entries"] is JArray entries)
+                    return entries.Count + (entries.Count == 1 ? " console entry" : " console entries");
+
                 var text = jo.Value<string>("text");
                 if (string.IsNullOrEmpty(text)) text = jo.Value<string>("key");
+                if (string.IsNullOrEmpty(text)) text = jo.Value<string>("path");
                 if (string.IsNullOrEmpty(text)) text = jo.Value<string>("cardId");
                 if (!string.IsNullOrEmpty(text)) return Truncate(text, 60);
             }
             catch { /* free-form */ }
-            return Truncate(payload.Replace("\n", " "), 60);
+            return Truncate(payload.Replace("\r", " ").Replace("\n", " "), 60);
         }
 
         private static string Truncate(string s, int max)
@@ -220,7 +242,7 @@ namespace AutonomousMcp.Editor.UI
                                 GUILayout.Label(icon, GUILayout.Width(18), GUILayout.Height(18));
 
                             if (a.kind == "card")
-                                EditorGUILayout.LabelField(a.title ?? string.Empty, EditorStyles.boldLabel);
+                                EditorGUILayout.LabelField(a.title ?? string.Empty, CardTitleStyle);
                             else
                                 EditorGUILayout.LabelField(a.text ?? string.Empty, EditorStyles.wordWrappedLabel);
 
@@ -255,6 +277,25 @@ namespace AutonomousMcp.Editor.UI
                 }
             }
             EditorGUILayout.EndScrollView();
+        }
+
+        private static GUIStyle _cardTitle;
+        private static bool _cardTitleProSkin;
+
+        // boldLabel does not wrap, and IMGUI clips the overflow with no ellipsis, so a long card
+        // title silently loses its tail. Derive from wordWrappedLabel so the header lays out like
+        // the body does, then bold it. Rebuilt on skin change because the base colors are baked in.
+        private static GUIStyle CardTitleStyle
+        {
+            get
+            {
+                if (_cardTitle == null || _cardTitleProSkin != EditorGUIUtility.isProSkin)
+                {
+                    _cardTitle = new GUIStyle(EditorStyles.wordWrappedLabel) { fontStyle = FontStyle.Bold };
+                    _cardTitleProSkin = EditorGUIUtility.isProSkin;
+                }
+                return _cardTitle;
+            }
         }
 
         private static GUIContent IconForLevel(string level)
@@ -350,7 +391,11 @@ namespace AutonomousMcp.Editor.UI
 
             if (_attachScreenshot)
             {
-                var path = "Temp/advisor_shot_" + DateTime.UtcNow.Ticks + ".png";
+                // Absolute: the AI's working directory is its own repo, not the Unity project, so a
+                // project-relative path here would be unresolvable on the other end.
+                var projectRoot = System.IO.Directory.GetParent(Application.dataPath)?.FullName ?? string.Empty;
+                var path = System.IO.Path.Combine(
+                    projectRoot, "Temp", "advisor_shot_" + DateTime.UtcNow.Ticks + ".png");
                 var resp = AutonomousMcpToolDispatcher.HandleCaptureScreenshot(
                     new JObject { ["source"] = "editor", ["save_path"] = path });
                 if (resp != null && resp.success)
