@@ -204,6 +204,23 @@ failure whose name is under `AutonomousMcp.SelfTest`.
 - [ ] `com.autonomous-unity.mcp/Editor/AutonomousMcpToolDispatcher.cs` is ~5,350 lines.
       Split opportunistically only; it is high-churn, low-reward risk.
 
+## Cleanup safety + framework awareness (2026-07-31)
+
+- [x] **Driven-by detection** — FX clips / VRCFury / MA. On LEAF, inactive split is
+      **5 driven / 0 undriven** (Dog, Rabbit, Hair Swap, …). Cleanup bulk-select is
+      "Select undriven"; driven deletes need a second confirmation. `StateDossierTests` 10/10.
+- [x] **Supervisor bridge identity** — `status`/`ensure` compare `health_check` project
+      root to configured project. Harnesses honour `MCP_AUTO_LAUNCH=1` / `--ensure`.
+- [x] **`get_installed_packages` VPM fix** — 44 packages (was 6), manager=`alcom`,
+      recommendations for AAO/d4rk/TexTransTool. AAO reports `in_use` once on an avatar.
+- [x] **`unity_ndmf bake_cost`** — baseline (VRCFury only): ~0 delta. With TraceAndOptimize
+      on LEAF: **bones 396→363 (−33)**; polys / material slots / skinned meshes unchanged
+      (wardrobe toggles correctly block mesh merge). Component left on LEAF (scene dirty);
+      user decides keep vs remove. Dispatch timeout for `unity_ndmf` raised to 75s.
+- [ ] Manual delete smoke: `FT_Debug` (if still undriven after a re-check) or any truly
+      undriven object → Ctrl+Z + checkpoint restore.
+- [ ] Cold-launch `ensure` still needs Unity closed once (unchanged from prior note).
+
 ## Avatar Cleanup window (2026-07-31)
 
 - [x] Renders against LEAF, auto-picks the root from Selection, highlights disabled rows, and the

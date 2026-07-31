@@ -51,7 +51,8 @@ namespace AutonomousMcp.Editor
         internal static int DispatchTimeoutMsFor(string toolName) =>
             // manage_project_template's settings-apply can change color space, which reimports all
             // assets — give it the same headroom as generation so it doesn't spuriously time out.
-            (toolName == "manage_generator" || toolName == "manage_project_template")
+            // unity_ndmf bake_cost runs a full NDMF/VRCFury/AAO pipeline on a clone — same budget.
+            (toolName == "manage_generator" || toolName == "manage_project_template" || toolName == "unity_ndmf")
                 ? GeneratorDispatchTimeoutMs : DefaultDispatchTimeoutMs;
 
         internal static AutonomousMcpToolResponse DispatchOnMainThread(AutonomousMcpEnvelope envelope, int depth)
@@ -3580,10 +3581,38 @@ public static class __McpEval
                 {"com.azukimochi.light-limit-changer", "Light Limit Changer for MA — avatar brightness control"},
             };
 
-            var packages = new JArray();
+            // Keyed by package name so VPM + embedded + UPM can merge without duplicates.
+            // VPM projects keep nearly everything out of manifest.json — reading only that
+            // file reported 6 packages against 37 on disk and made the curated table useless.
+            var byName = new Dictionary<string, JObject>(StringComparer.OrdinalIgnoreCase);
 
-            // Read manifest.json
-            var manifestPath = Path.Combine(projectRoot, "Packages", "manifest.json");
+            void AddOrMerge(string name, string version, string source)
+            {
+                if (string.IsNullOrEmpty(name)) return;
+                if (!includeBuiltin && name.StartsWith("com.unity.modules.", StringComparison.Ordinal))
+                    return;
+                knownPackages.TryGetValue(name, out var description);
+                if (byName.TryGetValue(name, out var existing))
+                {
+                    // Prefer a concrete version over empty; keep the more specific source.
+                    if (string.IsNullOrEmpty(existing.Value<string>("version")) && !string.IsNullOrEmpty(version))
+                        existing["version"] = version;
+                    if (source == "vpm" || source == "embedded")
+                        existing["source"] = source;
+                    return;
+                }
+                byName[name] = JObject.FromObject(new
+                {
+                    name,
+                    version = version ?? "",
+                    source,
+                    description = description ?? "",
+                    isVrcEcosystem = knownPackages.ContainsKey(name)
+                });
+            }
+
+            var packagesDir = Path.Combine(projectRoot, "Packages");
+            var manifestPath = Path.Combine(packagesDir, "manifest.json");
             if (File.Exists(manifestPath))
             {
                 try
@@ -3594,23 +3623,11 @@ public static class __McpEval
                     {
                         foreach (var prop in deps.Properties())
                         {
-                            if (!includeBuiltin && prop.Name.StartsWith("com.unity.modules.", StringComparison.Ordinal))
-                                continue;
-
                             var version = prop.Value.ToString();
                             var isGit = version.Contains("github.com") || version.Contains(".git");
                             var isLocal = version.StartsWith("file:", StringComparison.Ordinal);
-
-                            knownPackages.TryGetValue(prop.Name, out var description);
-
-                            packages.Add(JToken.FromObject(new
-                            {
-                                name = prop.Name,
-                                version,
-                                source = isGit ? "git" : isLocal ? "local" : "registry",
-                                description = description ?? "",
-                                isVrcEcosystem = knownPackages.ContainsKey(prop.Name)
-                            }));
+                            AddOrMerge(prop.Name, version,
+                                isGit ? "git" : isLocal ? "local" : "registry");
                         }
                     }
                 }
@@ -3620,7 +3637,51 @@ public static class __McpEval
                 }
             }
 
-            // Detect additional packages via their components in loaded assemblies
+            var vpmPath = Path.Combine(packagesDir, "vpm-manifest.json");
+            var hasVpm = File.Exists(vpmPath);
+            if (hasVpm)
+            {
+                try
+                {
+                    var vpm = JObject.Parse(File.ReadAllText(vpmPath));
+                    foreach (var section in new[] { "dependencies", "locked" })
+                    {
+                        if (!(vpm[section] is JObject block)) continue;
+                        foreach (var prop in block.Properties())
+                        {
+                            var version = prop.Value is JObject jo
+                                ? (jo.Value<string>("version") ?? "")
+                                : prop.Value?.ToString() ?? "";
+                            AddOrMerge(prop.Name, version, "vpm");
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    return Error($"Failed to parse vpm-manifest.json: {ex.Message}");
+                }
+            }
+
+            // Embedded packages (Packages/<name>/package.json) catch anything not listed above.
+            if (Directory.Exists(packagesDir))
+            {
+                foreach (var dir in Directory.GetDirectories(packagesDir))
+                {
+                    var pkgJson = Path.Combine(dir, "package.json");
+                    if (!File.Exists(pkgJson)) continue;
+                    try
+                    {
+                        var pkg = JObject.Parse(File.ReadAllText(pkgJson));
+                        var name = pkg.Value<string>("name");
+                        var version = pkg.Value<string>("version") ?? "";
+                        AddOrMerge(name, version, "embedded");
+                    }
+                    catch { /* skip malformed */ }
+                }
+            }
+
+            var packages = new JArray(byName.Values.OrderBy(p => p.Value<string>("name")));
+
             var detectedFrameworks = new JArray();
             string[] frameworkTypes = {
                 "VRC.SDK3.Avatars.Components.VRCAvatarDescriptor",
@@ -3643,12 +3704,138 @@ public static class __McpEval
                 }
             }
 
+            var packageManager = DetectPackageManager(projectRoot, hasVpm);
+            var recommendations = BuildOptimizerRecommendations(
+                byName, detectedFrameworks, packageManager.Value<string>("manager") ?? "vpm");
+
             return Success(JToken.FromObject(new
             {
                 packageCount = packages.Count,
                 packages,
-                detectedFrameworks
+                detectedFrameworks,
+                packageManager,
+                recommendations
             }));
+        }
+
+        private static JObject DetectPackageManager(string projectRoot, bool hasVpm)
+        {
+            var vccSettings = Path.Combine(
+                Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
+                "VRChatCreatorCompanion", "settings.json");
+            var hasVcc = File.Exists(vccSettings);
+            // ALCOM projects commonly live under *Alcom*; path is the most reliable signal
+            // when VCC settings also exist on the same machine.
+            var looksAlcom = (projectRoot ?? "").IndexOf("Alcom", StringComparison.OrdinalIgnoreCase) >= 0;
+            string manager;
+            if (hasVpm && looksAlcom) manager = "alcom";
+            else if (hasVpm && hasVcc) manager = "vcc";
+            else if (hasVpm) manager = "vpm";
+            else manager = "upm";
+
+            string note;
+            switch (manager)
+            {
+                case "alcom":
+                    note = "Project looks ALCOM-managed (path + vpm-manifest). Install packages via ALCOM.";
+                    break;
+                case "vcc":
+                    note = "Project looks VCC-managed. Install packages via VRChat Creator Companion.";
+                    break;
+                case "vpm":
+                    note = "VPM manifest present. Install via ALCOM or VCC.";
+                    break;
+                default:
+                    note = "No vpm-manifest.json — Unity Package Manager only.";
+                    break;
+            }
+
+            return JObject.FromObject(new
+            {
+                manager,
+                hasVpmManifest = hasVpm,
+                hasVccSettings = hasVcc,
+                note
+            });
+        }
+
+        private static JArray BuildOptimizerRecommendations(
+            Dictionary<string, JObject> byName,
+            JArray detectedFrameworks,
+            string manager)
+        {
+            var list = new JArray();
+            string InstallHint(string displayName) => manager == "alcom"
+                ? $"Open ALCOM → select this project → Add package → search '{displayName}'."
+                : manager == "vcc"
+                    ? $"Open VRChat Creator Companion → Manage Project → Add package → search '{displayName}'."
+                    : $"Install '{displayName}' via your VPM client (ALCOM or VCC).";
+
+            bool Has(string id) => byName.ContainsKey(id);
+            bool TypeLoaded(string fragment)
+            {
+                foreach (var t in detectedFrameworks)
+                {
+                    var type = t.Value<string>("type") ?? "";
+                    if (type.IndexOf(fragment, StringComparison.OrdinalIgnoreCase) >= 0)
+                        return true;
+                }
+                return false;
+            }
+
+            if (Has("com.anatawa12.avatar-optimizer"))
+            {
+                // TypeLoaded only means the assembly is present. "Unused" means no
+                // TraceAndOptimize component is on any scene avatar yet.
+                var aaoType = ResolveType("Anatawa12.AvatarOptimizer.TraceAndOptimize");
+                var onAvatar = aaoType != null && UnityEngine.Object.FindObjectsOfType(aaoType, true).Length > 0;
+                list.Add(JToken.FromObject(new
+                {
+                    id = "aao",
+                    status = onAvatar ? "in_use" : "installed_unused",
+                    package = "com.anatawa12.avatar-optimizer",
+                    message = onAvatar
+                        ? "AAO TraceAndOptimize is on at least one avatar in the scene."
+                        : "AAO is installed but TraceAndOptimize is not on any avatar. Add Component → Avatar Optimizer → Trace And Optimize on the root (non-destructive; measure with unity_ndmf bake_cost)."
+                }));
+            }
+            else
+            {
+                list.Add(JToken.FromObject(new
+                {
+                    id = "aao",
+                    status = "missing",
+                    package = "com.anatawa12.avatar-optimizer",
+                    message = "AAO not installed — primary non-destructive fix for Over material slots / skinned meshes.",
+                    how = InstallHint("Avatar Optimizer")
+                }));
+            }
+
+            if (!Has("com.github.d4rkc0d3r.d4rkAvatarOptimizer") && !TypeLoaded("d4rkAvatarOptimizer"))
+            {
+                list.Add(JToken.FromObject(new
+                {
+                    id = "d4rk",
+                    status = "missing",
+                    package = "com.github.d4rkc0d3r.d4rkAvatarOptimizer",
+                    message = "d4rkAvatarOptimizer not installed — adds cross-shader material merging AAO does not do alone.",
+                    how = InstallHint("d4rkAvatarOptimizer")
+                }));
+            }
+
+            if (!Has("com.reina-sakiria.textranstool"))
+            {
+                list.Add(JToken.FromObject(new
+                {
+                    id = "textranstool",
+                    status = "missing",
+                    package = "com.reina-sakiria.textranstool",
+                    message = "TexTransTool not installed — non-destructive atlas/decals for texture VRAM.",
+                    how = InstallHint("TexTransTool")
+                }));
+            }
+
+            return list;
         }
 
         // ───────── list_shaders ─────────

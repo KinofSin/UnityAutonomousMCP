@@ -20,7 +20,7 @@
 import { mkdirSync, readFileSync, writeFileSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "./bridge.mjs";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE, maybeEnsureBridge } from "./bridge.mjs";
 
 const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "scene-dossier";
@@ -53,7 +53,7 @@ function slugify(s) {
 // A dossier is a read-only pull across many sections; a domain reload part-way
 // through would otherwise discard every section already fetched.
 async function call(tool, params = {}, timeoutMs = 20000) {
-  const r = await request(tool, params, {
+  let r = await request(tool, params, {
     client: CLIENT,
     timeoutMs,
     reconnectMs: 120000,
@@ -61,6 +61,17 @@ async function call(tool, params = {}, timeoutMs = 20000) {
     onRetry: ({ kind, recovered }) =>
       console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
   });
+  if (!r.ok && r.kind === "refused") {
+    const ensured = await maybeEnsureBridge();
+    if (ensured.ok) {
+      r = await request(tool, params, {
+        client: CLIENT,
+        timeoutMs,
+        reconnectMs: 120000,
+        idempotent: READ_ONLY_TOOLS.has(tool),
+      });
+    }
+  }
   if (!r.ok) fail(r.kind === "tool" ? `${tool} failed: ${r.message}` : describe(r, BRIDGE));
   return r.data ?? {};
 }
@@ -188,20 +199,23 @@ function toMarkdown(slug, d) {
     const pct = (n) => `${Math.round((n ?? 0) * 100)}%`;
     lines.push("## Cost attribution");
     lines.push(
-      `- totals: polys=${cost.totals.polygons} (${cost.rank?.polygons}) mats=${cost.totals.materialSlots} (${cost.rank?.materialSlots}) smr=${cost.totals.skinnedMeshes} (${cost.rank?.skinnedMeshes})`
+      `- totals: polys=${cost.totals.polygons} (${cost.rank?.polygons}) mats=${cost.totals.materialSlots} (${cost.rank?.materialSlots}) smr=${cost.totals.skinnedMeshes} (${cost.rank?.skinnedMeshes}) bones=${cost.totals?.bones ?? "?"} pb=${cost.totals?.physBones ?? "?"}`
     );
     const off = cost.inactive;
     if (off?.objects) {
       lines.push(
-        `- **inactive: ${off.objects} objects = ${off.polygons} polys (${pct(off.shareOfPolygons)})** — VRChat counts these; removing all leaves ${off.ifAllRemoved?.polygons} (${off.ifAllRemoved?.polygonRank})`
+        `- **inactive: ${off.objects} objects = ${off.polygons} polys (${pct(off.shareOfPolygons)})** — driven ${off.driven ?? "?"} (${off.drivenPolygons ?? "?"} polys) / undriven ${off.undriven ?? "?"} (${off.undrivenPolygons ?? "?"} polys). VRChat counts all; only undriven are free to delete.`
       );
     }
+    if (Array.isArray(cost.twins) && cost.twins.length) {
+      lines.push(`- twins: ${cost.twins.map((t) => `${t.name}${t.active ? "" : " (inactive)"}`).join(", ")} — edits do not propagate`);
+    }
     lines.push("");
-    lines.push("| object | active | polys | share | mats | polys if removed | rank after |");
-    lines.push("|---|---|---|---|---|---|---|");
+    lines.push("| object | active | polys | share | mats | driven by | polys if removed | rank after |");
+    lines.push("|---|---|---|---|---|---|---|---|");
     for (const c of cost.candidates ?? []) {
       lines.push(
-        `| ${c.path} | ${c.active ? "on" : "**OFF**"} | ${c.polygons} | ${pct(c.shareOfPolygons)} | ${c.materialSlots} | ${c.ifRemoved?.polygons} | ${c.ifRemoved?.polygonRank} |`
+        `| ${c.path} | ${c.active ? "on" : "**OFF**"} | ${c.polygons} | ${pct(c.shareOfPolygons)} | ${c.materialSlots} | ${c.drivenBySummary ?? "-"} | ${c.ifRemoved?.polygons} | ${c.ifRemoved?.polygonRank} |`
       );
     }
     lines.push("");

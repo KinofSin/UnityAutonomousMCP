@@ -66,8 +66,43 @@ function reportChecks() {
   );
 }
 
-function main() {
+async function reportBridge() {
+  try {
+    const { request } = await import("../tools/bridge.mjs");
+    const r = await request("health_check", {}, { timeoutMs: 2000, reconnectMs: 0, idempotent: true });
+    if (r.ok) {
+      const data = r.data ?? {};
+      console.log(
+        `bridge: up  unity=${data.unityVersion ?? "?"} scene=${data.activeScene?.name ?? "?"}`
+      );
+      return;
+    }
+    // Soft signal only — never block SessionStart.
+    let editorHint = "";
+    try {
+      const { spawnSync } = await import("node:child_process");
+      const { join, dirname } = await import("node:path");
+      const { fileURLToPath } = await import("node:url");
+      const script = join(dirname(fileURLToPath(import.meta.url)), "..", "tools", "unity-supervisor.mjs");
+      const out = spawnSync(process.execPath, [script, "status"], {
+        encoding: "utf8",
+        timeout: 15000,
+        stdio: ["ignore", "pipe", "pipe"],
+      });
+      const text = `${out.stdout ?? ""}\n${out.stderr ?? ""}`;
+      if (/editor running:\s*true/i.test(text)) editorHint = " (editor is running — AutoConnect may be off)";
+      else if (/editor running:\s*false/i.test(text)) editorHint = " (editor not running)";
+    } catch { /* informational */ }
+    console.log(`bridge: down${editorHint}`);
+    console.log("  recover with: node .claude/tools/unity-supervisor.mjs ensure");
+  } catch {
+    /* never fail SessionStart on bridge noise */
+  }
+}
+
+async function main() {
   reportChecks();
+  await reportBridge();
   if (!existsSync(STATE_DIR)) return;
 
   const files = readdirSync(STATE_DIR).filter((f) => f.endsWith(".json"));
@@ -122,4 +157,4 @@ function main() {
   );
 }
 
-main();
+await main();

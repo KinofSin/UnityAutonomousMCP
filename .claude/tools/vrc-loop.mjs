@@ -23,7 +23,7 @@
 import { mkdirSync, readFileSync, writeFileSync, readdirSync, existsSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
-import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE } from "./bridge.mjs";
+import { request, describe, READ_ONLY_TOOLS, DEFAULT_BRIDGE, maybeEnsureBridge } from "./bridge.mjs";
 
 const BRIDGE = DEFAULT_BRIDGE;
 const CLIENT = process.env.CLIENT || "vrc-loop";
@@ -89,7 +89,7 @@ function slugify(s) {
 // drop the bridge mid-pass. Losing a baseline to that would waste the whole run,
 // so reconnect rather than abort.
 async function call(tool, params = {}, timeoutMs = 20000) {
-  const r = await request(tool, params, {
+  let r = await request(tool, params, {
     client: CLIENT,
     timeoutMs,
     reconnectMs: 120000,
@@ -97,6 +97,17 @@ async function call(tool, params = {}, timeoutMs = 20000) {
     onRetry: ({ kind, recovered }) =>
       console.error(recovered ? "  (bridge back)" : `  (bridge ${kind}, retrying…)`),
   });
+  if (!r.ok && r.kind === "refused") {
+    const ensured = await maybeEnsureBridge();
+    if (ensured.ok) {
+      r = await request(tool, params, {
+        client: CLIENT,
+        timeoutMs,
+        reconnectMs: 120000,
+        idempotent: READ_ONLY_TOOLS.has(tool),
+      });
+    }
+  }
   if (!r.ok) fail(r.kind === "tool" ? `${tool} failed: ${r.message}` : describe(r, BRIDGE));
   return r.data ?? {};
 }

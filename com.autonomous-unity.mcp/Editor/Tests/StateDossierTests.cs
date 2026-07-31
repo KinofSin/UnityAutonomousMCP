@@ -1,8 +1,10 @@
 using System.IO;
+using System.Linq;
 using AutonomousMcp.Editor.Perception;
 using Newtonsoft.Json.Linq;
 using NUnit.Framework;
 using UnityEditor;
+using UnityEditor.Animations;
 using UnityEngine;
 
 namespace AutonomousMcp.SelfTest
@@ -236,6 +238,62 @@ namespace AutonomousMcp.SelfTest
             finally
             {
                 Object.DestroyImmediate(root);
+            }
+        }
+
+        [Test]
+        public void Cost_marks_animation_driven_objects()
+        {
+            // An FX clip that toggles a child's m_IsActive must surface as drivenBy —
+            // otherwise the cleanup window treats live wardrobe as free space.
+            var root = new GameObject("CostDrivenRoot");
+            AnimationClip clip = null;
+            AnimatorController ctrl = null;
+            try
+            {
+                var wardrobe = AddRenderer(root, "DogEars", 100, active: false);
+                AddRenderer(root, "Body", 50, active: true);
+
+                clip = new AnimationClip { name = "ToggleDog" };
+                AnimationUtility.SetEditorCurve(
+                    clip,
+                    EditorCurveBinding.FloatCurve("DogEars", typeof(GameObject), "m_IsActive"),
+                    AnimationCurve.Constant(0, 1, 1f));
+
+                ctrl = new AnimatorController { name = "TestFX" };
+                ctrl.AddLayer("FX");
+                ctrl.AddParameter("Dog", AnimatorControllerParameterType.Bool);
+                var sm = ctrl.layers[0].stateMachine;
+                var state = sm.AddState("On");
+                state.motion = clip;
+                var any = sm.AddAnyStateTransition(state);
+                any.AddCondition(AnimatorConditionMode.If, 0, "Dog");
+
+                var animator = root.AddComponent<Animator>();
+                animator.runtimeAnimatorController = ctrl;
+
+                var report = AvatarCost.Build(root, root.scene);
+                var dog = report.Entries.Find(e => e.Name == "DogEars");
+                Assert.IsNotNull(dog);
+                Assert.IsTrue(dog.IsDriven, "DogEars must be marked driven by the FX clip");
+                Assert.IsTrue(
+                    dog.DrivenBySummary.IndexOf("Dog", System.StringComparison.OrdinalIgnoreCase) >= 0 ||
+                    dog.DrivenBySummary.IndexOf("ToggleDog", System.StringComparison.OrdinalIgnoreCase) >= 0,
+                    "driven summary should name the parameter or clip: " + dog.DrivenBySummary);
+
+                Assert.AreEqual(1, report.InactiveDriven);
+                Assert.AreEqual(0, report.InactiveUndriven);
+
+                var cost = CostSection(root);
+                var candidates = (JArray)cost["candidates"];
+                var dogRow = candidates.First(t => t.Value<string>("name") == "DogEars");
+                Assert.IsTrue(dogRow.Value<bool>("driven"));
+            }
+            finally
+            {
+                Object.DestroyImmediate(root);
+                if (clip != null) Object.DestroyImmediate(clip);
+                if (ctrl != null) Object.DestroyImmediate(ctrl);
             }
         }
 

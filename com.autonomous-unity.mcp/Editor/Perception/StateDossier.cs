@@ -513,6 +513,19 @@ namespace AutonomousMcp.Editor.Perception
                 verts = e.Verts,
                 materialSlots = e.MaterialSlots,
                 blendshapes = e.Blendshapes,
+                exclusiveVramMB = Math.Round(e.ExclusiveVramBytes / (1024d * 1024d), 2),
+                sharedVramMB = Math.Round(e.SharedVramBytes / (1024d * 1024d), 2),
+                physBones = e.PhysBones,
+                physBoneColliders = e.PhysBoneColliders,
+                driven = e.IsDriven,
+                drivenBy = e.DrivenBy.Select(d => new
+                {
+                    kind = d.Kind,
+                    label = d.Label,
+                    source = d.Source,
+                    parameter = d.Parameter
+                }).ToList(),
+                drivenBySummary = e.DrivenBySummary,
                 shareOfPolygons = Math.Round(report.ShareOfPolygons(e.Polygons), 4),
                 ifRemoved = Project(report.Without(e.Polygons, e.MaterialSlots))
             }).ToList();
@@ -526,7 +539,12 @@ namespace AutonomousMcp.Editor.Perception
                     materialSlots = report.TotalMaterialSlots,
                     skinnedMeshes = report.SkinnedMeshes,
                     meshRenderers = report.MeshRenderers,
-                    objects = report.Entries.Count
+                    objects = report.Entries.Count,
+                    bones = report.TotalBones,
+                    physBones = report.TotalPhysBones,
+                    physBoneColliders = report.TotalPhysBoneColliders,
+                    exclusiveVramMB = Math.Round(report.TotalExclusiveVramBytes / (1024d * 1024d), 2),
+                    sharedVramMB = Math.Round(report.TotalSharedVramBytes / (1024d * 1024d), 2)
                 },
                 rank = new
                 {
@@ -540,15 +558,29 @@ namespace AutonomousMcp.Editor.Perception
                     polygons = report.InactivePolygons,
                     materialSlots = report.InactiveMaterialSlots,
                     shareOfPolygons = Math.Round(report.ShareOfPolygons(report.InactivePolygons), 4),
-                    ifAllRemoved = Project(report.Without(report.InactivePolygons, report.InactiveMaterialSlots))
+                    driven = report.InactiveDriven,
+                    drivenPolygons = report.InactiveDrivenPolygons,
+                    undriven = report.InactiveUndriven,
+                    undrivenPolygons = report.InactiveUndrivenPolygons,
+                    ifAllRemoved = Project(report.Without(report.InactivePolygons, report.InactiveMaterialSlots)),
+                    ifUndrivenRemoved = Project(report.Without(report.InactiveUndrivenPolygons, 0))
                 },
+                twins = report.Twins.Select(t => new
+                {
+                    name = t.Name,
+                    instanceId = t.InstanceId,
+                    active = t.Active
+                }).ToList(),
                 candidates,
                 pc = PcBudgets,
                 note = "Costs include INACTIVE objects on purpose — VRChat's stats count renderers " +
-                       "with includeInactive, so a disabled toggle still costs rank and download " +
-                       "size. 'Over' means past the highest tier VRChat publishes for that metric. " +
-                       "Removing a child of a prefab instance is a prefab override: it holds for " +
-                       "upload, but reverting the prefab brings it back."
+                       "with includeInactive. 'disabled' is NOT 'unused': check drivenBy (animation " +
+                       "FX / VRCFury / Modular Avatar). Exclusive VRAM is reclaimed by deleting; " +
+                       "shared is not. Bones are NOT reclaimed by deleting a renderer. Editor VRAM " +
+                       "over-reports ~2×. 'Over' means past the highest published VRChat tier. " +
+                       "Removing a prefab-instance child is an override — upload keeps it, prefab " +
+                       "revert brings it back. Twins (e.g. LEAF QUEST) are separate roots; edits " +
+                       "do not propagate."
             };
         }
 

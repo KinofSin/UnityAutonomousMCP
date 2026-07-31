@@ -156,6 +156,33 @@ export function makeCaller({ onFail, ...defaults }) {
   };
 }
 
+/**
+ * When the bridge is refused and MCP_AUTO_LAUNCH=1 (or opts.ensure / --ensure),
+ * shell out to unity-supervisor ensure once, then let the caller retry.
+ * Never launches Unity under someone sitting at the keyboard by default.
+ */
+export async function maybeEnsureBridge(opts = {}) {
+  const enabled =
+    opts.ensure === true ||
+    process.env.MCP_AUTO_LAUNCH === "1" ||
+    process.argv.includes("--ensure");
+  if (!enabled) return { attempted: false, ok: false };
+
+  const { spawnSync } = await import("node:child_process");
+  const { fileURLToPath } = await import("node:url");
+  const { dirname, join } = await import("node:path");
+  const script = join(dirname(fileURLToPath(import.meta.url)), "unity-supervisor.mjs");
+  console.error("bridge refused — running unity-supervisor ensure (MCP_AUTO_LAUNCH/--ensure)…");
+  const out = spawnSync(process.execPath, [script, "ensure"], {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "pipe"],
+    timeout: Number(opts.waitMs ?? 320000),
+  });
+  if (out.stdout) process.stderr.write(out.stdout);
+  if (out.stderr) process.stderr.write(out.stderr);
+  return { attempted: true, ok: out.status === 0, status: out.status };
+}
+
 /** Tools that only read editor state, so an ambiguous failure is safe to retry. */
 export const READ_ONLY_TOOLS = new Set([
   "health_check",

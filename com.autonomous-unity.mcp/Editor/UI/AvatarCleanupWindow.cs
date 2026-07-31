@@ -20,10 +20,13 @@ namespace AutonomousMcp.Editor.UI
     /// goes onto Unity's undo stack as a single collapsed step *and* takes a checkpoint first, so
     /// it is reversible two ways without duplicating the agent's permission layer. Asset edits are
     /// deliberately still out of scope here — those are not undoable and stay with the agent.
+    ///
+    /// "Disabled" is NOT "unused". Objects driven by FX clips / VRCFury / Modular Avatar are
+    /// wardrobe toggles; bulk-select only picks undriven ones.
     /// </summary>
     internal sealed class AvatarCleanupWindow : EditorWindow
     {
-        private enum SortMode { Polygons, MaterialSlots, Name, DisabledFirst }
+        private enum SortMode { Polygons, MaterialSlots, ExclusiveVram, Name, DisabledFirst, UndrivenFirst }
 
         private GameObject _root;
         private CostReport _report;
@@ -31,13 +34,14 @@ namespace AutonomousMcp.Editor.UI
         private Vector2 _scroll;
         private SortMode _sort = SortMode.Polygons;
         private bool _onlyDisabled;
+        private bool _onlyUndriven;
         private string _status = string.Empty;
 
         [MenuItem("Window/Autonomous MCP/Avatar Cleanup")]
         public static void Open()
         {
             var w = GetWindow<AvatarCleanupWindow>(false, "Avatar Cleanup", true);
-            w.minSize = new Vector2(560, 380);
+            w.minSize = new Vector2(720, 380);
             w.Show();
         }
 
@@ -50,7 +54,6 @@ namespace AutonomousMcp.Editor.UI
 
         private void Refresh()
         {
-            // Instance ids in the previous report are stale after a delete or a scene change.
             _selected.Clear();
             _report = _root != null
                 ? AvatarCost.Build(_root, SceneManager.GetActiveScene())
@@ -85,7 +88,7 @@ namespace AutonomousMcp.Editor.UI
             {
                 EditorGUI.BeginChangeCheck();
                 _root = (GameObject)EditorGUILayout.ObjectField(
-                    _root, typeof(GameObject), true, GUILayout.Width(220));
+                    _root, typeof(GameObject), true, GUILayout.Width(200));
                 if (EditorGUI.EndChangeCheck()) Refresh();
 
                 if (GUILayout.Button("Use selection", EditorStyles.toolbarButton, GUILayout.Width(90)))
@@ -101,12 +104,14 @@ namespace AutonomousMcp.Editor.UI
 
                 GUILayout.Space(8);
                 GUILayout.Label("Sort", GUILayout.Width(28));
-                var next = (SortMode)EditorGUILayout.EnumPopup(_sort, EditorStyles.toolbarPopup, GUILayout.Width(110));
-                if (next != _sort) _sort = next;
+                _sort = (SortMode)EditorGUILayout.EnumPopup(_sort, EditorStyles.toolbarPopup, GUILayout.Width(120));
 
                 _onlyDisabled = GUILayout.Toggle(
-                    _onlyDisabled, new GUIContent("Disabled only", "Show only objects that are switched off"),
-                    EditorStyles.toolbarButton, GUILayout.Width(90));
+                    _onlyDisabled, new GUIContent("Disabled", "Show only objects that are switched off"),
+                    EditorStyles.toolbarButton, GUILayout.Width(70));
+                _onlyUndriven = GUILayout.Toggle(
+                    _onlyUndriven, new GUIContent("Undriven", "Show only objects with no FX/VRCFury/MA driver"),
+                    EditorStyles.toolbarButton, GUILayout.Width(70));
 
                 GUILayout.FlexibleSpace();
                 if (!string.IsNullOrEmpty(_status)) GUILayout.Label(_status, EditorStyles.miniLabel);
@@ -120,42 +125,61 @@ namespace AutonomousMcp.Editor.UI
                 EditorGUILayout.LabelField(
                     $"{_report.TotalPolygons:N0} polys ({_report.PolygonRank})   " +
                     $"{_report.TotalMaterialSlots} material slots ({_report.MaterialSlotRank})   " +
-                    $"{_report.SkinnedMeshes} skinned meshes ({_report.SkinnedMeshRank})",
+                    $"{_report.SkinnedMeshes} skinned meshes ({_report.SkinnedMeshRank})   " +
+                    $"{_report.TotalPhysBones} PhysBones   " +
+                    $"{_report.TotalBones} bones",
                     EditorStyles.boldLabel);
+
+                var exclMb = _report.TotalExclusiveVramBytes / (1024d * 1024d);
+                var sharedMb = _report.TotalSharedVramBytes / (1024d * 1024d);
+                EditorGUILayout.LabelField(
+                    $"VRAM (editor, ~2× over-report): exclusive {exclMb:F1} MB · shared {sharedMb:F1} MB. " +
+                    "Deleting a renderer does NOT reclaim bones.",
+                    EditorStyles.wordWrappedMiniLabel);
 
                 if (_report.InactiveObjects > 0)
                 {
-                    var all = _report.Without(_report.InactivePolygons, _report.InactiveMaterialSlots);
-                    // The headline finding: switched off does not mean free. VRChat's stats walk
-                    // renderers with includeInactive, so these cost rank and download size today.
                     EditorGUILayout.LabelField(
-                        $"{_report.InactiveObjects} disabled objects still cost " +
-                        $"{_report.InactivePolygons:N0} polys " +
-                        $"({_report.ShareOfPolygons(_report.InactivePolygons):P0}) — VRChat counts them. " +
-                        $"Removing all leaves {all.Polygons:N0} ({all.PolygonRank}).",
+                        $"{_report.InactiveObjects} disabled ({_report.InactivePolygons:N0} polys): " +
+                        $"{_report.InactiveDriven} menu-driven wardrobe ({_report.InactiveDrivenPolygons:N0} polys), " +
+                        $"{_report.InactiveUndriven} undriven ({_report.InactiveUndrivenPolygons:N0} polys). " +
+                        "VRChat counts all of them — but driven ones are live toggles, not free space.",
                         EditorStyles.wordWrappedMiniLabel);
 
-                    if (GUILayout.Button("Select all disabled", GUILayout.Width(140)))
+                    if (GUILayout.Button(
+                            $"Select undriven ({_report.InactiveUndriven})",
+                            GUILayout.Width(160)))
                     {
                         _selected.Clear();
-                        foreach (var e in _report.Entries.Where(e => !e.Active))
+                        foreach (var e in _report.Entries.Where(e => !e.Active && !e.IsDriven))
                             _selected.Add(e.InstanceId);
                     }
+                }
+
+                if (_report.Twins != null && _report.Twins.Count > 0)
+                {
+                    var names = string.Join(", ", _report.Twins.Select(t => t.Name + (t.Active ? "" : " (inactive)")));
+                    EditorGUILayout.HelpBox(
+                        $"Sibling avatar twin(s) detected: {names}. Edits here do NOT propagate — " +
+                        "optimize / clean each twin separately.",
+                        MessageType.Warning);
                 }
             }
         }
 
         private IEnumerable<CostEntry> VisibleEntries()
         {
-            var rows = _onlyDisabled
-                ? _report.Entries.Where(e => !e.Active)
-                : (IEnumerable<CostEntry>)_report.Entries;
+            IEnumerable<CostEntry> rows = _report.Entries;
+            if (_onlyDisabled) rows = rows.Where(e => !e.Active);
+            if (_onlyUndriven) rows = rows.Where(e => !e.IsDriven);
 
             switch (_sort)
             {
                 case SortMode.MaterialSlots: return rows.OrderByDescending(e => e.MaterialSlots);
+                case SortMode.ExclusiveVram: return rows.OrderByDescending(e => e.ExclusiveVramBytes);
                 case SortMode.Name: return rows.OrderBy(e => e.Name, StringComparer.OrdinalIgnoreCase);
                 case SortMode.DisabledFirst: return rows.OrderBy(e => e.Active).ThenByDescending(e => e.Polygons);
+                case SortMode.UndrivenFirst: return rows.OrderBy(e => e.IsDriven).ThenByDescending(e => e.Polygons);
                 default: return rows.OrderByDescending(e => e.Polygons);
             }
         }
@@ -165,13 +189,15 @@ namespace AutonomousMcp.Editor.UI
             using (new EditorGUILayout.HorizontalScope(EditorStyles.toolbar))
             {
                 GUILayout.Space(20);
-                GUILayout.Label("Object", EditorStyles.miniBoldLabel, GUILayout.MinWidth(160));
-                GUILayout.Label("Polys", EditorStyles.miniBoldLabel, GUILayout.Width(64));
-                GUILayout.Label("Share", EditorStyles.miniBoldLabel, GUILayout.Width(48));
-                GUILayout.Label("Mats", EditorStyles.miniBoldLabel, GUILayout.Width(40));
-                GUILayout.Label("Shapes", EditorStyles.miniBoldLabel, GUILayout.Width(48));
-                GUILayout.Label("State", EditorStyles.miniBoldLabel, GUILayout.Width(56));
-                GUILayout.Space(48);
+                GUILayout.Label("Object", EditorStyles.miniBoldLabel, GUILayout.MinWidth(140));
+                GUILayout.Label("Polys", EditorStyles.miniBoldLabel, GUILayout.Width(56));
+                GUILayout.Label("Share", EditorStyles.miniBoldLabel, GUILayout.Width(40));
+                GUILayout.Label("Mats", EditorStyles.miniBoldLabel, GUILayout.Width(36));
+                GUILayout.Label("Excl MB", EditorStyles.miniBoldLabel, GUILayout.Width(52));
+                GUILayout.Label("PB", EditorStyles.miniBoldLabel, GUILayout.Width(28));
+                GUILayout.Label("State", EditorStyles.miniBoldLabel, GUILayout.Width(40));
+                GUILayout.Label("Driven by", EditorStyles.miniBoldLabel, GUILayout.MinWidth(100));
+                GUILayout.Space(44);
             }
 
             using (var scroll = new EditorGUILayout.ScrollViewScope(_scroll))
@@ -189,20 +215,22 @@ namespace AutonomousMcp.Editor.UI
                             else _selected.Remove(e.InstanceId);
                         }
 
-                        // Disabled objects are the ones people assume are free, so they are the
-                        // ones worth drawing attention to rather than greying out.
                         var prev = GUI.color;
-                        if (!e.Active) GUI.color = new Color(1f, 0.78f, 0.45f);
-                        GUILayout.Label(new GUIContent(e.Name, e.Path), GUILayout.MinWidth(160));
+                        if (!e.Active && e.IsDriven) GUI.color = new Color(1f, 0.78f, 0.45f);
+                        else if (!e.Active) GUI.color = new Color(0.7f, 0.9f, 0.7f);
+                        GUILayout.Label(new GUIContent(e.Name, e.Path), GUILayout.MinWidth(140));
                         GUI.color = prev;
 
-                        GUILayout.Label($"{e.Polygons:N0}", GUILayout.Width(64));
-                        GUILayout.Label($"{_report.ShareOfPolygons(e.Polygons):P0}", GUILayout.Width(48));
-                        GUILayout.Label(e.MaterialSlots.ToString(), GUILayout.Width(40));
-                        GUILayout.Label(e.Blendshapes > 0 ? e.Blendshapes.ToString() : "-", GUILayout.Width(48));
-                        GUILayout.Label(e.Active ? "on" : "OFF", GUILayout.Width(56));
+                        GUILayout.Label($"{e.Polygons:N0}", GUILayout.Width(56));
+                        GUILayout.Label($"{_report.ShareOfPolygons(e.Polygons):P0}", GUILayout.Width(40));
+                        GUILayout.Label(e.MaterialSlots.ToString(), GUILayout.Width(36));
+                        var excl = e.ExclusiveVramBytes / (1024d * 1024d);
+                        GUILayout.Label(excl > 0.01 ? excl.ToString("F1") : "-", GUILayout.Width(52));
+                        GUILayout.Label(e.PhysBones > 0 ? e.PhysBones.ToString() : "-", GUILayout.Width(28));
+                        GUILayout.Label(e.Active ? "on" : "OFF", GUILayout.Width(40));
+                        GUILayout.Label(new GUIContent(e.DrivenBySummary, e.DrivenBySummary), GUILayout.MinWidth(100));
 
-                        if (GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(44)))
+                        if (GUILayout.Button("Ping", EditorStyles.miniButton, GUILayout.Width(40)))
                         {
                             var go = e.Resolve();
                             if (go != null)
@@ -230,11 +258,13 @@ namespace AutonomousMcp.Editor.UI
                 long polys = picked.Sum(e => (long)e.Polygons);
                 int mats = picked.Sum(e => e.MaterialSlots);
                 var after = _report.Without(polys, mats);
+                var driven = picked.Count(e => e.IsDriven);
 
                 EditorGUILayout.LabelField(
                     $"{picked.Count} selected · {polys:N0} polys · {mats} material slots  →  " +
                     $"leaves {after.Polygons:N0} ({after.PolygonRank}) and " +
-                    $"{after.MaterialSlots} slots ({after.MaterialSlotRank})",
+                    $"{after.MaterialSlots} slots ({after.MaterialSlotRank})" +
+                    (driven > 0 ? $"  ·  {driven} are menu-driven" : ""),
                     EditorStyles.wordWrappedLabel);
 
                 using (new EditorGUILayout.HorizontalScope())
@@ -279,19 +309,27 @@ namespace AutonomousMcp.Editor.UI
             long polys = targets.Sum(t => (long)t.Entry.Polygons);
             var after = _report.Without(polys, targets.Sum(t => t.Entry.MaterialSlots));
             var active = targets.Where(t => t.Entry.Active).ToList();
+            var driven = targets.Where(t => t.Entry.IsDriven).ToList();
             var prefabs = targets.Where(t => PrefabUtility.IsPartOfPrefabInstance(t.Go)).ToList();
 
             var message =
                 $"Delete {targets.Count} object(s), saving {polys:N0} polys?\n\n" +
                 string.Join("\n", targets.Take(12).Select(t =>
-                    $"  {(t.Entry.Active ? "on " : "OFF")}  {t.Entry.Name}  ({t.Entry.Polygons:N0})")) +
+                    $"  {(t.Entry.Active ? "on " : "OFF")}  {t.Entry.Name}  ({t.Entry.Polygons:N0})" +
+                    (t.Entry.IsDriven ? $"  ← {t.Entry.DrivenBySummary}" : ""))) +
                 (targets.Count > 12 ? $"\n  …and {targets.Count - 12} more" : "") +
                 $"\n\nLeaves {after.Polygons:N0} polys ({after.PolygonRank}).";
 
-            // Deleting something currently switched ON removes a visible part of the avatar; that
-            // deserves louder billing than removing an unused wardrobe toggle.
             if (active.Count > 0)
                 message += $"\n\nWARNING: {active.Count} of these are currently ENABLED and visible.";
+
+            if (driven.Count > 0)
+            {
+                message += $"\n\nWARNING: {driven.Count} are DRIVEN by FX / VRCFury / Modular Avatar:\n" +
+                    string.Join("\n", driven.Take(8).Select(t =>
+                        $"  · {t.Entry.Name}: {t.Entry.DrivenBySummary}")) +
+                    "\nDeleting them breaks menu toggles / animation curves.";
+            }
 
             if (prefabs.Count > 0)
                 message +=
@@ -303,6 +341,19 @@ namespace AutonomousMcp.Editor.UI
             if (!EditorUtility.DisplayDialog("Delete objects", message, "Delete", "Cancel"))
                 return;
 
+            // Second confirmation when anything is menu-driven — the whole point of Phase A.
+            if (driven.Count > 0)
+            {
+                if (!EditorUtility.DisplayDialog(
+                        "Confirm deleting menu-driven objects",
+                        $"{driven.Count} selected object(s) are live wardrobe toggles.\n\n" +
+                        "This will leave dead menu controls and broken FX curves.\n\n" +
+                        "Really delete them?",
+                        "Yes, delete driven objects",
+                        "Cancel"))
+                    return;
+            }
+
             string checkpointId;
             try
             {
@@ -313,7 +364,6 @@ namespace AutonomousMcp.Editor.UI
             }
             catch (Exception ex)
             {
-                // No checkpoint means no safety net, so this stops rather than proceeding on Undo alone.
                 EditorUtility.DisplayDialog("Checkpoint failed — nothing deleted", ex.Message, "OK");
                 return;
             }

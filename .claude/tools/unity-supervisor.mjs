@@ -170,6 +170,28 @@ async function bridgeUp(timeoutMs = 3000) {
   return r.ok ? r.data : null;
 }
 
+// health_check.projectPath is Application.dataPath (…/Assets). Compare its parent
+// to the configured project so a second editor on port 8080 cannot look "ready".
+function bridgeProjectRoot(health) {
+  const dataPath = health?.projectPath;
+  if (!dataPath || typeof dataPath !== "string") return null;
+  return path.resolve(path.dirname(dataPath));
+}
+
+function sameProject(a, b) {
+  if (!a || !b) return false;
+  const norm = (p) => path.resolve(p).replace(/\\/g, "/").toLowerCase().replace(/\/+$/, "");
+  return norm(a) === norm(b);
+}
+
+function reportIdentityMismatch(configured, health) {
+  const answering = bridgeProjectRoot(health);
+  console.error("bridge is answering for a DIFFERENT project:");
+  console.error(`  configured: ${configured}`);
+  console.error(`  answering:  ${answering ?? "(unknown)"}`);
+  console.error("  Close the other editor, or point UNITY_PROJECT_PATH / unity-project.json at the live one.");
+}
+
 function requireConfig() {
   const projectPath = resolveProject();
   if (!projectPath) {
@@ -192,8 +214,10 @@ async function cmdStatus() {
   console.log(`bridge:  ${health ? "up" : "down"}  (${DEFAULT_BRIDGE})`);
   if (health) {
     const e = health.editor ?? {};
+    const answering = bridgeProjectRoot(health);
     console.log(`  unity=${health.unityVersion} scene=${health.activeScene?.name} dirty=${health.activeScene?.isDirty}`);
     console.log(`  compiling=${e.isCompiling} updating=${e.isUpdating} playing=${e.isPlaying}`);
+    if (answering) console.log(`  answering project: ${answering}`);
   }
 
   if (!projectPath) {
@@ -208,6 +232,11 @@ async function cmdStatus() {
   console.log(`  version=${projectVersion(projectPath) ?? "?"}  editor=${editor.path ?? `(${editor.source})`}`);
   console.log(`  editor running: ${proc.running} (${proc.how})`);
 
+  if (health && !sameProject(projectPath, bridgeProjectRoot(health))) {
+    reportIdentityMismatch(projectPath, health);
+    process.exit(EXIT_NOT_READY);
+  }
+
   if (!health && proc.running) {
     console.log("");
     console.log("Editor is running but the bridge is not answering. Most likely AutoConnect is off:");
@@ -220,35 +249,40 @@ async function cmdStatus() {
 async function cmdEnsure() {
   const waitMs = Number(arg("wait-ms") ?? 300000);
   const noLaunch = process.argv.includes("--no-launch");
+  const projectPath = resolveProject();
 
   const already = await bridgeUp();
   if (already) {
-    console.log("bridge already up");
+    if (projectPath && !sameProject(projectPath, bridgeProjectRoot(already))) {
+      reportIdentityMismatch(projectPath, already);
+      process.exit(EXIT_NOT_READY);
+    }
+    console.log("bridge already up" + (projectPath ? ` for ${projectPath}` : ""));
     process.exit(EXIT_OK);
   }
 
-  const projectPath = requireConfig();
-  const proc = editorRunningFor(projectPath);
+  const configured = requireConfig();
+  const proc = editorRunningFor(configured);
   let logPath = path.join(LOG_DIR, "unity-launch.log");
 
   if (proc.running) {
     // Never launch over a live editor: Unity refuses the second instance and the
     // real problem is almost always AutoConnect, which launching cannot fix.
-    console.log(`editor already running for ${projectPath} — waiting for the bridge rather than launching`);
+    console.log(`editor already running for ${configured} — waiting for the bridge rather than launching`);
   } else if (noLaunch) {
     console.log("bridge down and editor not running (--no-launch given)");
     process.exit(EXIT_NOT_READY);
   } else {
-    const editor = resolveEditor(projectPath);
+    const editor = resolveEditor(configured);
     if (!editor.path) {
       console.error(`cannot find a Unity editor: ${editor.source}`);
       console.error("  pass --editor <path> or set UNITY_EDITOR_PATH");
       process.exit(EXIT_CONFIG);
     }
-    const started = launch(editor.path, projectPath);
+    const started = launch(editor.path, configured);
     logPath = started.logPath;
     console.log(`launched ${editor.path}`);
-    console.log(`  project=${projectPath} pid=${started.pid}`);
+    console.log(`  project=${configured} pid=${started.pid}`);
     console.log(`  log=${logPath}`);
   }
 
@@ -257,6 +291,10 @@ async function cmdEnsure() {
   const secs = ((Date.now() - t0) / 1000).toFixed(0);
 
   if (health) {
+    if (!sameProject(configured, bridgeProjectRoot(health))) {
+      reportIdentityMismatch(configured, health);
+      process.exit(EXIT_NOT_READY);
+    }
     console.log(`bridge up after ${secs}s — unity=${health.unityVersion} scene=${health.activeScene?.name}`);
     process.exit(EXIT_OK);
   }
