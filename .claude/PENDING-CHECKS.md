@@ -203,3 +203,41 @@ failure whose name is under `AutonomousMcp.SelfTest`.
       writes the `.terrainlayer` + albedo pair.
 - [ ] `com.autonomous-unity.mcp/Editor/AutonomousMcpToolDispatcher.cs` is ~5,350 lines.
       Split opportunistically only; it is high-churn, low-reward risk.
+
+## Full EditMode suite, post-`execute_csharp` change (2026-07-31)
+
+- [x] 260 tests: 236 passed, **17 failed, 7 skipped — zero failures in this package.** Every failure
+      belongs to YUCP's signing/licensing stack (`DirectVpmInstaller`, `GuardianTransaction`,
+      `PackageSigningTab`, `ProtectedImport*`, `TrustedRootKeys`). Two are unambiguously not ours:
+      one needs `C:\Users\svalp\Downloads\…`, a hardcoded path from another developer's machine, and
+      one needs `Leaf/build-src/YUCP.PatchRuntime/`. Ours (`AdvisorStore`, `CheckpointStore`,
+      `StateDossier`, `McpMutateTests_*`) all pass; the 7 skips are our own network/manual guards.
+      Treat 17 YUCP failures as the expected baseline in this project, not a regression signal.
+
+## LEAF model import review (2026-07-31)
+
+- [x] **Read/Write disabled on `LEAF.fbx`.** All 18 meshes shipped with it on. 17 of 18 now report
+      `isReadable=false` (the holdout is `FT_Debug`, whose FBX lives in `Packages/` and was left
+      alone deliberately). Console clean, scene capture confirms the avatar renders intact.
+      Checkpoint `20260731-164111-0ebde9`.
+- [x] **The saving is real but NOT measurable in the Editor — do not quote a number for it.**
+      `Profiler.GetRuntimeMemorySizeLong(mesh)` reported exactly 50.45 MB before and after, because
+      the Editor keeps mesh data resident regardless of the flag; the CPU-side copy is only stripped
+      in a *player* build, i.e. the uploaded avatar. Second Profiler caveat found today and it cuts
+      the opposite way to the first: **texture** VRAM over-reports ~2×, **mesh** memory does not move
+      at all. Neither is trustworthy as an absolute, and unlike textures, meshes are not even
+      trustworthy as a delta. The only real confirmation is an upload.
+- [x] Not worth touching, checked and dismissed: mesh compression is already `Off` (correct — it is
+      lossy and only shrinks disk, not runtime), `optimizeMeshVertices/Polygons` already on, and the
+      importer has `importCameras`/`importLights` **true** while the hierarchy contains **zero** of
+      either, so flipping them costs a reimport for no gain.
+- [ ] **Biggest remaining win is not an import setting: ~110,800 of 231,895 verts are on *disabled*
+      toggles** — `ANIMAL DOG` (43,000), `ANIMAL Rabbit Ears` (32,397), `HAIR LONG` (18,597),
+      `Hair Curly` (16,783). VRChat's performance stats walk renderers with `includeInactive`, so
+      these still count toward rank and download size while contributing nothing. Deleting rather
+      than disabling an unused toggle beats every importer flag here. User's call — it removes
+      wardrobe functionality. Worth confirming against the SDK's own stats panel first.
+- [ ] `LEAF.fbx` imports 150 blendshapes on the head with **blend-shape normals = `Calculate`**,
+      which is very likely why `Body` alone is 13.47 MB. Setting it to `None` is the largest
+      mesh-memory win available, but it changes expression shading — usually imperceptible,
+      occasionally not. Semi-visual, so not autonomous Tier 1.
